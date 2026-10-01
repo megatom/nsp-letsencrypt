@@ -45,7 +45,9 @@ von oben nach unten – 1 und 2 ändern noch nichts:
    *DNS prüfen*, bis es grün ist (der Hoster braucht oft ein paar Minuten; ein geänderter Eintrag ist wegen der TTL bis zu einer Stunde lang noch alt zu sehen).
 5. **Mail bei Fehlern:** *Testmail senden*. Vorgabe ist Versand über NSP selbst an die lokale IP
    des Servers (von `localhost` lehnt NSP meist mit 5.4.4 ab), Absender `info@<Domain>`.
-6. **Zertifikat holen, einspielen und Erneuerung einrichten**.
+6. Optional vorher **Ablauf testen**: spielt den Abruf bei der Testumgebung von Let's Encrypt komplett
+   durch (acme-dns, CNAME, Ausstellung) und prüft den NSP-Zugang lesend – ohne echtes Zertifikat,
+   ohne etwas einzuspielen; beliebig oft möglich. Dann **Zertifikat holen, einspielen und Erneuerung einrichten**.
 7. Optional **Erneuerung testen** – führt die nächtliche Prüfung sofort als SYSTEM aus und zeigt,
    dass die Aufgabe an Posh-ACME, den API-Schlüssel und NSP herankommt. Nötig ist es nicht.
 8. Falls vorhanden: die alte **win-acme-Aufgabe deaktivieren** (Knopf erscheint im Status).

@@ -199,10 +199,13 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
             <CheckBox Name="chkErzwingen" Margin="0,0,0,8"
                       Content="Neu ausstellen, auch wenn das vorhandene Zertifikat noch nicht fällig ist"/>
             <WrapPanel>
+              <Button Name="btnAblaufTest" Content="Ablauf testen"
+                      ToolTip="Spielt den Abruf bei der Testumgebung von Let's Encrypt komplett durch (acme-dns, CNAME, Ausstellung) und prüft den NSP-Zugang – ohne echtes Zertifikat, ohne etwas zu ändern."/>
               <Button Name="btnAusstellen" Content="Zertifikat holen, einspielen und Erneuerung einrichten" FontWeight="SemiBold"/>
               <Button Name="btnErneuernJetzt" Content="Erneuerung testen (optional)"
                       ToolTip="Führt die nächtliche Prüfung sofort als SYSTEM aus. Nur zum Kontrollieren, nötig ist es nicht."/>
             </WrapPanel>
+            <TextBlock Name="txtAblaufStatus" TextWrapping="Wrap" Margin="0,8,0,0" LineHeight="20"/>
             <TextBlock Name="txtZertStatus" TextWrapping="Wrap" Margin="0,8,0,0"/>
           </StackPanel>
         </GroupBox>
@@ -227,7 +230,7 @@ foreach ($n in $xaml.SelectNodes("//*[@Name]")) {
     $ui[$name] = $fenster.FindName($name)
 }
 $fenster.Title = "NoSpamProxy – Let's Encrypt (Version $NleVersion)"
-$script:Knoepfe = 'btnUpdate', 'btnPoshInstall', 'btnWacsAus', 'btnRegistrieren', 'btnDnsPruefen', 'btnApiKey', 'btnKonnektoren',
+$script:Knoepfe = 'btnAblaufTest', 'btnUpdate', 'btnPoshInstall', 'btnWacsAus', 'btnRegistrieren', 'btnDnsPruefen', 'btnApiKey', 'btnKonnektoren',
                   'btnTestmail', 'btnAusstellen', 'btnErneuernJetzt'
 $script:AcmeDns = $null
 $script:DnsOk = $false
@@ -410,7 +413,8 @@ function Update-Status {
         }
     } else {
         Set-Meldung $ui.txtZertHinweis ("Holt das Zertifikat bei Let's Encrypt, spielt es in die angehakten Konnektoren ein und richtet " +
-            'die tägliche automatische Erneuerung ein. Vorher die Schritte 1 bis 5 erledigen.') hinweis
+            'die tägliche automatische Erneuerung ein. Vorher die Schritte 1 bis 5 erledigen. Mit „Ablauf testen“ lässt sich ' +
+            'vorher alles prüfen, ohne ein echtes Zertifikat zu holen.') hinweis
         Set-Meldung $ui.txtZertStatus '' hinweis
     }
     Update-HostStatus
@@ -987,6 +991,40 @@ $ui.btnTestmail.Add_Click({
         if ($alt) { $alt.Mail = $m; Save-NleKonfig $alt } else { Save-NleKonfig $script:TestKonfig }
         Set-Meldung $ui.txtMailStatus "✔ Testmail gesendet am $($jetzt.ToString('dd.MM.yyyy HH:mm')) – bitte im Postfach nachsehen." ok
     } -Fehler { param($m) Set-Meldung $ui.txtMailStatus "✘ Testmail fehlgeschlagen: $m" fehler }
+})
+
+$ui.btnAblaufTest.Add_Click({
+    $k = Read-Formular -Vollstaendig
+    if (-not $k) { return }
+    if (-not $k.AcmeDns -or $k.AcmeDns.Hostname -ne $k.Hostname) {
+        Set-Meldung $ui.txtAblaufStatus '✘ Zuerst in Schritt 4 registrieren und den DNS-Eintrag setzen.' fehler
+        return
+    }
+    if ($script:Fakten -and -not $script:Fakten.Posh) {
+        Set-Meldung $ui.txtAblaufStatus '✘ Posh-ACME fehlt, bitte oben im Status installieren.' fehler
+        return
+    }
+    Set-Zeilen $ui.txtAblaufStatus @('–  Teste Abruf bei Let''s Encrypt (Testumgebung), etwa 1 Minute ...')
+    Start-Hintergrund -Arbeit {
+        param($k)
+        $VerbosePreference = 'Continue'
+        Test-NleAblauf -Konfig $k
+        $VerbosePreference = 'SilentlyContinue'
+        # Lesender Test des NSP-Zugangs; ein Fehler hier macht den Abruftest nicht ungültig
+        $nsp = try { "✔  NoSpamProxy erreichbar, $(@(Get-NleZiele).Count) Konnektor-Stellen lesbar" }
+               catch { "⚠  NoSpamProxy nicht lesbar: $($_.Exception.Message)" }
+        Write-NleLog $nsp.Substring(3)
+        $nsp
+    } -Argumente @(, $k) -Danach {
+        param($r)
+        Set-Zeilen $ui.txtAblaufStatus @(
+            '✔  Ablauf erfolgreich: Let''s Encrypt hat über acme-dns und den CNAME ein Testzertifikat ausgestellt.',
+            [string]@($r)[-1],
+            '–  Es wurde nichts eingespielt. Ein echtes Zertifikat holt der Knopf daneben.')
+    } -Fehler {
+        param($m)
+        Set-Zeilen $ui.txtAblaufStatus @("✘  Ablauf fehlgeschlagen: $m")
+    }
 })
 
 $ui.btnAusstellen.Add_Click({

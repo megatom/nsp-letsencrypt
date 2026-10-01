@@ -3,7 +3,7 @@
 # und die automatische Erneuerung (NspCert-Erneuern.ps1).
 # Windows PowerShell 5.1, benötigt die Module Posh-ACME und NoSpamProxy.
 
-$NleVersion    = '2026.10.01.3'
+$NleVersion    = '2026.10.01.4'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 
 $NleBasis    = Join-Path $env:ProgramData 'NspLetsEncrypt'
@@ -521,8 +521,10 @@ function New-NleZertifikat {
         }
     }
     Write-NleLog "Fordere Zertifikat für $h an (RSA 2048, dauert etwa 1 Minute) ..."
-    $cert = New-PACertificate $h -Plugin AcmeDns -PluginArgs $pluginArgs -Install `
-        -FriendlyName "NoSpamProxy $h (Let's Encrypt)" -DnsSleep 30 -Force:$Erzwingen -ErrorAction Stop
+    try {
+        $cert = New-PACertificate $h -Plugin AcmeDns -PluginArgs $pluginArgs -Install `
+            -FriendlyName "NoSpamProxy $h (Let's Encrypt)" -DnsSleep 30 -Force:$Erzwingen -ErrorAction Stop
+    } catch { throw (Get-NleAcmeFehlertext $_.Exception.Message) }
     if (-not $cert) {
         $cert = Get-PACertificate $h
         if ($cert) { Write-NleLog "Vorhandenes Zertifikat verwendet (noch nicht fällig, gültig bis $($cert.NotAfter.ToString('dd.MM.yyyy')))." }
@@ -533,6 +535,53 @@ function New-NleZertifikat {
     }
     Write-NleLog "Zertifikat $($cert.Thumbprint), gültig bis $($cert.NotAfter.ToString('dd.MM.yyyy'))"
     $cert.Thumbprint
+}
+
+function Get-NleAcmeFehlertext {
+    # Typische Fehler beim Abruf in einen Hinweis übersetzen, was zu tun ist
+    param([string]$Meldung)
+    $hinweis = switch -Regex ($Meldung) {
+        '\(401\)|Unauthorized|Nicht autorisiert' { 'acme-dns hat die Zugangsdaten abgelehnt – in Schritt 4 neu registrieren und den CNAME beim Hoster anpassen.'; break }
+        'TXT record|NXDOMAIN|dns ::|DNS problem' { 'Let''s Encrypt findet den Prüfeintrag nicht – ist der CNAME beim Hoster richtig gesetzt (Schritt 4, DNS prüfen)?'; break }
+        'public suffix|Invalid identifiers|rejectedIdentifier' { 'Let''s Encrypt stellt für diesen Hostnamen nichts aus – Schreibweise in Schritt 3 prüfen.'; break }
+        'rateLimited|too many' { 'Let''s Encrypt bremst gerade (zu viele Versuche) – später noch einmal probieren.'; break }
+        'Unable to connect|Die Verbindung|Remotename|could not be resolved|Zeitüberschreitung|timed out' { 'Keine Verbindung ins Internet (Let''s Encrypt oder acme-dns) – Firewall/Proxy prüfen.'; break }
+    }
+    if ($hinweis) { "$hinweis ($Meldung)" } else { $Meldung }
+}
+
+function Test-NleAblauf {
+    # Spielt den kompletten Abruf gegen die Testumgebung von Let's Encrypt durch (acme-dns, CNAME,
+    # Ausstellung), ohne Zertifikatspeicher und NSP anzufassen; der Testauftrag wird danach gelöscht.
+    param([Parameter(Mandatory)]$Konfig)
+    Import-NlePoshAcme
+    $h = $Konfig.Hostname
+    $reg = $Konfig.AcmeDns
+    if (-not $reg -or $reg.Hostname -ne $h) { throw "Keine acme-dns-Registrierung für $h (Schritt 4)." }
+    $auftrag = 'nle-ablauftest'
+    try {
+        Set-PAServer LE_STAGE
+        if (-not (Get-PAAccount)) {
+            New-PAAccount -Contact $Konfig.Kontakt -AcceptTOS -UseAltPluginEncryption -ErrorAction Stop | Out-Null
+        }
+        $pluginArgs = @{
+            ACMEServer       = $reg.server
+            ACMERegistration = @{
+                "_acme-challenge.$h" = @($reg.subdomain, $reg.username, $reg.password, $reg.fulldomain)
+            }
+        }
+        Write-NleLog "Ablauftest für $h bei der Testumgebung von Let's Encrypt (dauert etwa 1 Minute) ..."
+        $cert = New-PACertificate $h -Name $auftrag -Plugin AcmeDns -PluginArgs $pluginArgs -DnsSleep 30 -Force -ErrorAction Stop
+        if (-not $cert) { throw 'Let''s Encrypt hat kein Testzertifikat ausgestellt.' }
+        Write-NleLog 'Testzertifikat ausgestellt (Testumgebung, nicht vertrauenswürdig, wird nicht verwendet).'
+    } catch {
+        throw (Get-NleAcmeFehlertext $_.Exception.Message)
+    } finally {
+        try { Remove-PAOrder -Name $auftrag -Force -ErrorAction Stop } catch { }
+        # Für Fenster und Erneuerung wieder den echten Server einstellen
+        $server = if ($Konfig.Server) { $Konfig.Server } else { 'LE_PROD' }
+        try { Set-PAServer $server } catch { }
+    }
 }
 
 function Install-NleErneuerung {
@@ -600,11 +649,11 @@ function Invoke-NleErneuerung {
         }
     } catch {
         $fehler = $_
-        Write-NleLog "Erneuerung fehlgeschlagen: $($fehler.Exception.Message)" -Stufe Fehler
+        Write-NleLog "Erneuerung fehlgeschlagen: $(Get-NleAcmeFehlertext $fehler.Exception.Message)" -Stufe Fehler
         Write-NleEreignis "Erneuerung für $($k.Hostname) fehlgeschlagen:`r`n$($fehler | Out-String)" -Typ Error -Id 1002
         try {
             $text = "Server: $env:COMPUTERNAME`r`nHost: $($k.Hostname)`r`nZeit: $(Get-Date -Format 'dd.MM.yyyy HH:mm')`r`n`r`n" +
-                "$($fehler | Out-String)`r`nLog: $NleLogOrdner"
+                "$(Get-NleAcmeFehlertext $fehler.Exception.Message)`r`n`r`nDetails:`r`n$($fehler | Out-String)`r`nLog: $NleLogOrdner"
             Send-NleMail -Konfig $k -Betreff "Let's Encrypt-Erneuerung fehlgeschlagen: $($k.Hostname) ($env:COMPUTERNAME)" -Text $text
         } catch {
             Write-NleLog "Fehler-Mail konnte nicht gesendet werden: $($_.Exception.Message)" -Stufe Fehler

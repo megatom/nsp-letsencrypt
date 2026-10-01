@@ -1,8 +1,8 @@
 {
-  "Version": "2026.10.01.3",
-  "Tag": "v2026.10.01.3",
+  "Version": "2026.10.01.4",
+  "Tag": "v2026.10.01.4",
   "Aenderungen": [
-    "Fenster erscheint sofort, Ladebalken und Prüfungen laufen sichtbar darin",
-    "Schnellerer Start, Zeitmessung im Log"
+    "Neuer Knopf \"Ablauf testen\": kompletter Abruf bei der Testumgebung von Let's Encrypt, ohne echtes Zertifikat",
+    "Verständliche Hinweise bei Fehlern im Abruf (acme-dns, CNAME, Let's Encrypt), auch in der Fehler-Mail"
   ]
 }
