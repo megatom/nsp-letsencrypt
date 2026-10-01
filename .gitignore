@@ -1,0 +1,3 @@
+# lokale Test-Artefakte
+*.log
+.claude/
