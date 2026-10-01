@@ -1,3 +1,4 @@
 # lokale Test-Artefakte
 *.log
 .claude/
+NspLetsEncrypt.zip

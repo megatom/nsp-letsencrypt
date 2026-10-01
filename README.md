@@ -105,6 +105,17 @@ Staging (Testumgebung von Let's Encrypt, nicht vertrauenswürdige Zertifikate) g
 nicht mehr. Nur falls man den Abruf oft hintereinander probieren muss (Grenzen von Let's Encrypt):
 in `config.json` `"Server": "LE_STAGE"` setzen und dabei **keine** Konnektoren anhaken.
 
+## Paket für den Server
+
+`Paket-bauen.ps1` erzeugt im Projektordner `NspLetsEncrypt.zip` mit allen Dateien in einem Unterordner
+`NspLetsEncrypt\`. Diese eine Datei auf den Server kopieren, entpacken, `NspLetsEncrypt\Starten.cmd`
+starten. Ein lokaler Git-Hook (`.git\hooks\post-commit`, nicht im Repo) baut die ZIP nach jedem Commit
+neu; die ZIP selbst ist per `.gitignore` ausgeschlossen. Hook auf einem neuen Rechner einrichten:
+
+```bash
+printf '#!/bin/sh\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(git rev-parse --show-toplevel)/Paket-bauen.ps1"\n' > .git/hooks/post-commit
+```
+
 ## Updates
 
 Beim Öffnen fragt das Fenster `version.json` in diesem Repo ab. Ist dort eine neuere Version
