@@ -1,9 +1,8 @@
 {
-  "Version": "2026.10.01.2",
-  "Tag": "v2026.10.01.2",
+  "Version": "2026.10.01.3",
+  "Tag": "v2026.10.01.3",
   "Aenderungen": [
-    "Kein Konsolenfenster mehr beim Start",
-    "Hostname wird auf neuen Servern aus NoSpamProxy übernommen",
-    "Vorgaben für neue Server: Absender info@<Domain>, SMTP-Server = lokale IP"
+    "Fenster erscheint sofort, Ladebalken und Prüfungen laufen sichtbar darin",
+    "Schnellerer Start, Zeitmessung im Log"
   ]
 }

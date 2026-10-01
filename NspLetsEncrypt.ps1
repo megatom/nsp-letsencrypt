@@ -12,17 +12,8 @@ if ($PSVersionTable.PSEdition -eq 'Core' -or -not $istAdmin -or
     return
 }
 
-# Eigenes Konsolenfenster ausblenden – nur wenn es allein zu diesem Prozess gehört,
-# sonst verschwände beim Start aus einer offenen PowerShell deren Fenster
-Add-Type -Namespace NspLe -Name Konsole -MemberDefinition @'
-[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-[DllImport("kernel32.dll")] public static extern uint GetConsoleProcessList(uint[] liste, uint anzahl);
-[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr fenster, int modus);
-'@
-$konsole = [NspLe.Konsole]::GetConsoleWindow()
-if ($konsole -ne [IntPtr]::Zero -and [NspLe.Konsole]::GetConsoleProcessList((New-Object UInt32[] 4), 4) -le 1) {
-    [void][NspLe.Konsole]::ShowWindow($konsole, 0)
-}
+# Startzeit des Prozesses für die Zeitmessung im Log
+$script:Prozessstart = (Get-Process -Id $PID).StartTime
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
@@ -80,6 +71,7 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
 
         <GroupBox Header="Status">
           <StackPanel>
+            <ProgressBar Name="prgLaden" Height="4" IsIndeterminate="True" Margin="0,0,0,6"/>
             <TextBlock Name="txtStatus" TextWrapping="Wrap" LineHeight="20"/>
             <TextBlock Name="txtUpdate" TextWrapping="Wrap" LineHeight="20"/>
             <WrapPanel Margin="0,6,0,0">
@@ -346,13 +338,16 @@ function Update-Hintergrund {
 function Update-Status {
     $zeilen = New-Object System.Collections.Generic.List[string]
     $c = $null; $task = $null; $info = $null
-    $nsp = Get-Module -ListAvailable NoSpamProxy | Select-Object -First 1
-    $posh = Get-Module -ListAvailable Posh-ACME | Sort-Object Version -Descending | Select-Object -First 1
-    if ($nsp) { $zeilen.Add("✔  NoSpamProxy-Modul $($nsp.Version)") }
-    else { $zeilen.Add('✘  NoSpamProxy-Modul fehlt – das Werkzeug muss auf dem NSP-Server laufen.') }
-    if ($posh) { $zeilen.Add("✔  Posh-ACME $($posh.Version)") }
-    else { $zeilen.Add('✘  Posh-ACME fehlt') }
-    $ui.btnPoshInstall.Visibility = if ($posh) { 'Collapsed' } else { 'Visible' }
+    $f = $script:Fakten
+    if (-not $f) {
+        $zeilen.Add('–  Prüfe Module (NoSpamProxy, Posh-ACME) ...')
+    } else {
+        if ($f.Nsp) { $zeilen.Add("✔  NoSpamProxy-Modul $($f.Nsp)") }
+        else { $zeilen.Add('✘  NoSpamProxy-Modul fehlt – das Werkzeug muss auf dem NSP-Server laufen.') }
+        if ($f.Posh) { $zeilen.Add("✔  Posh-ACME $($f.Posh)") }
+        else { $zeilen.Add('✘  Posh-ACME fehlt') }
+    }
+    $ui.btnPoshInstall.Visibility = if ($f -and -not $f.Posh) { 'Visible' } else { 'Collapsed' }
 
     $k = Get-NleKonfig
     if ($k -and $k.Thumbprint) {
@@ -389,9 +384,12 @@ function Update-Status {
         $zeilen.Add('–  Erneuerung noch nicht eingerichtet')
     }
 
-    $wacs = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like 'win-acme*' -and $_.State -ne 'Disabled' })
-    if ($wacs.Count) {
-        $zeilen.Add("⚠  win-acme-Aufgabe aktiv ($($wacs.TaskName -join ', ')) – erneuert weiter und überschreibt den Empfangskonnektor.")
+    $wacs = if ($f) { @($f.Wacs | Where-Object { $_ }) } else { @() }
+    if (-not $f) {
+        $zeilen.Add('–  Prüfe geplante Aufgaben (win-acme) ...')
+        $ui.btnWacsAus.Visibility = 'Collapsed'
+    } elseif ($wacs.Count) {
+        $zeilen.Add("⚠  win-acme-Aufgabe aktiv ($($wacs -join ', ')) – erneuert weiter und überschreibt den Empfangskonnektor.")
         $ui.btnWacsAus.Visibility = 'Visible'
     } else {
         $ui.btnWacsAus.Visibility = 'Collapsed'
@@ -654,7 +652,7 @@ function Import-Formular {
         $ui.txtKontakt.Text = $Vorgaben.Kontakt
         $ui.txtAcmeServer.Text = $Vorgaben.AcmeDns
         $ui.txtMailAn.Text = $Vorgaben.MailAn
-        $ui.txtSmtp.Text = Get-NleLokaleIp
+        $ui.txtSmtp.Text = ''
         $ui.txtPort.Text = "$($Vorgaben.SmtpPort)"
         Add-Log 'Noch keine Konfiguration auf diesem Server.'
     }
@@ -741,6 +739,62 @@ function Update-UpdatePruefung {
     }
 }
 
+# Langsame Abfragen (Module, alle geplanten Aufgaben, lokale IP) nebenher; Update-Status nutzt das Ergebnis
+$script:Fakten = $null
+$script:FaktenPruefung = $null
+$script:FaktenTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:FaktenTimer.Interval = [TimeSpan]::FromMilliseconds(300)
+$script:FaktenTimer.Add_Tick({ Update-FaktenPruefung })
+
+function Start-FaktenPruefung {
+    if ($script:FaktenPruefung) { return }
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript(". '$($script:Common.Replace("'", "''"))'" + @'
+
+$nsp = Get-Module -ListAvailable -Name NoSpamProxy | Select-Object -First 1
+$posh = Get-Module -ListAvailable -Name Posh-ACME | Sort-Object Version -Descending | Select-Object -First 1
+[pscustomobject]@{
+    Nsp  = $(if ($nsp) { [string]$nsp.Version } else { $null })
+    Posh = $(if ($posh) { [string]$posh.Version } else { $null })
+    Wacs = @(Get-ScheduledTask -ErrorAction SilentlyContinue |
+             Where-Object { $_.TaskName -like 'win-acme*' -and $_.State -ne 'Disabled' } | ForEach-Object { $_.TaskName })
+    Ip   = Get-NleLokaleIp
+}
+'@)
+    $script:FaktenPruefung = @{ PS = $ps; Handle = $ps.BeginInvoke() }
+    $script:FaktenTimer.Start()
+}
+
+function Update-FaktenPruefung {
+    $p = $script:FaktenPruefung
+    if (-not $p) { $script:FaktenTimer.Stop(); return }
+    if (-not $p.Handle.IsCompleted) { return }
+    $script:FaktenTimer.Stop()
+    $script:FaktenPruefung = $null
+    $r = $null
+    try { $r = @($p.PS.EndInvoke($p.Handle))[-1] } catch { Add-Log "WARNUNG: Prüfung der Module fehlgeschlagen: $($_.Exception.Message)" }
+    $p.PS.Dispose()
+    if (-not $r) { $r = [pscustomobject]@{ Nsp = $null; Posh = $null; Wacs = @(); Ip = 'localhost' } }
+    $script:Fakten = $r
+    if (-not (Get-NleKonfig) -and -not $ui.txtSmtp.Text.Trim()) { $ui.txtSmtp.Text = $r.Ip }
+    Update-Status
+}
+
+# Ladebalken läuft, solange irgendeine Prüfung oder Aktion arbeitet
+$script:Geladen = $false
+$script:LadeTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:LadeTimer.Interval = [TimeSpan]::FromMilliseconds(250)
+$script:LadeTimer.Add_Tick({ Update-Ladebalken })
+
+function Update-Ladebalken {
+    $laeuft = [bool]($script:Aufgabe -or $script:HostPruefung -or $script:UpdatePruefung -or $script:NspName -or $script:FaktenPruefung)
+    $ui.prgLaden.Visibility = if ($laeuft) { 'Visible' } else { 'Collapsed' }
+    if (-not $laeuft -and -not $script:Geladen) {
+        $script:Geladen = $true
+        Add-Log ('Start: alle Prüfungen fertig nach {0:n1} s' -f ((Get-Date) - $script:Prozessstart).TotalSeconds)
+    }
+}
+
 # Hostname aus der SMTP-Begrüßung des eigenen NSP übernehmen (nur wenn das Feld leer ist)
 $script:NspName = $null
 $script:NspNameTimer = New-Object System.Windows.Threading.DispatcherTimer
@@ -779,8 +833,15 @@ function Update-NspNameUebernahme {
 }
 
 function Start-Pruefungen {
-    # Beim Öffnen: Hostname übernehmen/prüfen (nebenher), Konnektoren laden (wenn ein Schlüssel
-    # da ist), danach DNS prüfen (wenn registriert)
+    # Läuft, sobald das Fenster sichtbar ist: Formular füllen, dann alle Prüfungen nebenher –
+    # Module/Aufgaben, Updates, Hostname, Konnektoren (wenn ein Schlüssel da ist), danach DNS
+    Add-Log ('Start: Fenster sichtbar nach {0:n1} s' -f ((Get-Date) - $script:Prozessstart).TotalSeconds)
+    try {
+        Import-Formular
+        Update-Status
+    } catch { Show-Startfehler $_.Exception.Message; $fenster.Close(); return }
+    $script:LadeTimer.Start()
+    Start-FaktenPruefung
     Start-UpdatePruefung
     Start-NspNameUebernahme
     $dns = {
@@ -829,7 +890,7 @@ $ui.btnPoshInstall.Add_Click({
         }
         Install-Module -Name Posh-ACME -Scope AllUsers -Force -Repository PSGallery
         Write-NleLog 'Posh-ACME installiert.'
-    } -Danach { Update-Status }
+    } -Danach { Start-FaktenPruefung }
 })
 
 $ui.btnWacsAus.Add_Click({
@@ -841,7 +902,7 @@ $ui.btnWacsAus.Add_Click({
     if (-not (Show-Frage $frage)) { return }
     $t | Disable-ScheduledTask | Out-Null
     Add-Log "win-acme-Aufgabe deaktiviert: $($t.TaskName -join ', ')"
-    Update-Status
+    Start-FaktenPruefung
 })
 
 $ui.btnRegistrieren.Add_Click({
@@ -988,9 +1049,5 @@ $ui.btnErneuernJetzt.Add_Click({
 
 #endregion
 
-try {
-    Import-Formular
-    Update-Status
-} catch { Show-Startfehler $_.Exception.Message; return }
 $fenster.Add_ContentRendered({ Start-Pruefungen })
 [void]$fenster.ShowDialog()

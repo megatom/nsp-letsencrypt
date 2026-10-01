@@ -3,7 +3,7 @@
 # und die automatische Erneuerung (NspCert-Erneuern.ps1).
 # Windows PowerShell 5.1, benötigt die Module Posh-ACME und NoSpamProxy.
 
-$NleVersion    = '2026.10.01.2'
+$NleVersion    = '2026.10.01.3'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 
 $NleBasis    = Join-Path $env:ProgramData 'NspLetsEncrypt'
