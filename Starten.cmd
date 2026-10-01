@@ -1,3 +1,3 @@
 @echo off
-rem Startet das Einrichtungsfenster (fragt nach Adminrechten)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0NspLetsEncrypt.ps1"
+rem Startet das Einrichtungsfenster ohne Konsolenfenster (fragt nach Adminrechten)
+start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0NspLetsEncrypt.ps1"

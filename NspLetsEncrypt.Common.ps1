@@ -3,7 +3,7 @@
 # und die automatische Erneuerung (NspCert-Erneuern.ps1).
 # Windows PowerShell 5.1, benötigt die Module Posh-ACME und NoSpamProxy.
 
-$NleVersion    = '2026.10.01'
+$NleVersion    = '2026.10.01.2'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 
 $NleBasis    = Join-Path $env:ProgramData 'NspLetsEncrypt'
@@ -611,6 +611,38 @@ function Invoke-NleErneuerung {
         }
         throw $fehler
     }
+}
+
+#endregion
+
+#region Vorgaben für neue Server
+
+function Get-NleNspHostname {
+    # Hostname, den NoSpamProxy in seiner SMTP-Begrüßung meldet ("220 mail.firma.de - NoSpamProxy ready")
+    param([string]$Server = '127.0.0.1', [int]$Port = 25)
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    try {
+        $verbindung = $tcp.BeginConnect($Server, $Port, $null, $null)
+        if (-not $verbindung.AsyncWaitHandle.WaitOne(5000)) { return $null }
+        $tcp.EndConnect($verbindung)
+        $strom = $tcp.GetStream()
+        $strom.ReadTimeout = 10000
+        $zeile = (New-Object System.IO.StreamReader($strom)).ReadLine()
+        try { $schreiber = New-Object System.IO.StreamWriter($strom); $schreiber.Write("QUIT`r`n"); $schreiber.Flush() } catch { }
+        if ($zeile -match '^220[ -]([A-Za-z0-9.-]+)') {
+            $h = $Matches[1].ToLower().TrimEnd('.')
+            if ($h -match '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$') { return $h }
+        }
+        $null
+    } catch { $null } finally { $tcp.Close() }
+}
+
+function Get-NleLokaleIp {
+    # IPv4 der Netzwerkkarte mit Standard-Gateway; NSP lässt Mails von dort meist als Unternehmens-Mailserver zu
+    $ip = Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
+        ForEach-Object { $_.IPv4Address.IPAddress } | Select-Object -First 1
+    if ($ip) { $ip } else { 'localhost' }
 }
 
 #endregion

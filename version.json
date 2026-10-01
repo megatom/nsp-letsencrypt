@@ -1,7 +1,9 @@
 {
-  "Version": "2026.10.01",
-  "Tag": "v2026.10.01",
+  "Version": "2026.10.01.2",
+  "Tag": "v2026.10.01.2",
   "Aenderungen": [
-    "Erste öffentliche Version mit Update-Prüfung beim Start"
+    "Kein Konsolenfenster mehr beim Start",
+    "Hostname wird auf neuen Servern aus NoSpamProxy übernommen",
+    "Vorgaben für neue Server: Absender info@<Domain>, SMTP-Server = lokale IP"
   ]
 }

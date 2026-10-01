@@ -8,24 +8,42 @@ if ($PSVersionTable.PSEdition -eq 'Core' -or -not $istAdmin -or
     [Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     # NSP-Modul und WPF brauchen Windows PowerShell 5.1 im STA-Modus, Zertifikatsspeicher braucht Adminrechte
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    Start-Process $ps -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -File `"$PSCommandPath`""
+    Start-Process $ps -Verb RunAs -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$PSCommandPath`""
     return
 }
 
-# Vorbelegung für neue Server
+# Eigenes Konsolenfenster ausblenden – nur wenn es allein zu diesem Prozess gehört,
+# sonst verschwände beim Start aus einer offenen PowerShell deren Fenster
+Add-Type -Namespace NspLe -Name Konsole -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("kernel32.dll")] public static extern uint GetConsoleProcessList(uint[] liste, uint anzahl);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr fenster, int modus);
+'@
+$konsole = [NspLe.Konsole]::GetConsoleWindow()
+if ($konsole -ne [IntPtr]::Zero -and [NspLe.Konsole]::GetConsoleProcessList((New-Object UInt32[] 4), 4) -le 1) {
+    [void][NspLe.Konsole]::ShowWindow($konsole, 0)
+}
+
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+function Show-Startfehler {
+    # Ohne Konsole wären Fehler beim Start unsichtbar
+    param([string]$Text)
+    [void][System.Windows.MessageBox]::Show("Das Fenster konnte nicht starten:`n`n$Text", "NoSpamProxy – Let's Encrypt", 'OK', 'Error')
+}
+
+# Vorbelegung für neue Server (SMTP-Server: lokale IP, siehe Import-Formular)
 $Vorgaben = @{
     Kontakt    = 'support.erkelenz@conbrio-group.de'
     MailAn     = 'support.erkelenz@conbrio-group.de'
-    SmtpServer = 'localhost'
     SmtpPort   = 25
     AcmeDns    = 'auth.acme-dns.io'
 }
 
 $script:Ordner = $PSScriptRoot
 $script:Common = Join-Path $PSScriptRoot 'NspLetsEncrypt.Common.ps1'
+if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Common"; return }
 . $script:Common
-
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -206,7 +224,8 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 </Window>
 '@
 
-$fenster = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
+try { $fenster = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml)) }
+catch { Show-Startfehler $_.Exception.Message; return }
 # Nie höher als der sichtbare Bildschirm (RDP-Sitzungen sind oft niedrig), sonst liegen Titelleiste oder Log außerhalb
 $arbeitsflaeche = [System.Windows.SystemParameters]::WorkArea
 if ($fenster.Height -gt $arbeitsflaeche.Height) { $fenster.Height = $arbeitsflaeche.Height }
@@ -607,7 +626,7 @@ function Set-AbsenderVorschlag {
     if ($ui.txtMailVon.Text.Trim() -or $h -notmatch '\.') { return }
     $teile = $h.Split('.')
     $domain = if ($teile.Count -gt 2) { ($teile[1..($teile.Count - 1)] -join '.') } else { $h }
-    $ui.txtMailVon.Text = "letsencrypt@$domain"
+    $ui.txtMailVon.Text = "info@$domain"
 }
 
 function Import-Formular {
@@ -635,7 +654,7 @@ function Import-Formular {
         $ui.txtKontakt.Text = $Vorgaben.Kontakt
         $ui.txtAcmeServer.Text = $Vorgaben.AcmeDns
         $ui.txtMailAn.Text = $Vorgaben.MailAn
-        $ui.txtSmtp.Text = $Vorgaben.SmtpServer
+        $ui.txtSmtp.Text = Get-NleLokaleIp
         $ui.txtPort.Text = "$($Vorgaben.SmtpPort)"
         Add-Log 'Noch keine Konfiguration auf diesem Server.'
     }
@@ -722,11 +741,48 @@ function Update-UpdatePruefung {
     }
 }
 
-function Start-Pruefungen {
-    # Beim Öffnen: Hostname prüfen (nebenher), Konnektoren laden (wenn ein Schlüssel da ist),
-    # danach DNS prüfen (wenn registriert)
-    Start-UpdatePruefung
+# Hostname aus der SMTP-Begrüßung des eigenen NSP übernehmen (nur wenn das Feld leer ist)
+$script:NspName = $null
+$script:NspNameTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:NspNameTimer.Interval = [TimeSpan]::FromMilliseconds(300)
+$script:NspNameTimer.Add_Tick({ Update-NspNameUebernahme })
+
+function Start-NspNameUebernahme {
+    if ($ui.txtHost.Text.Trim()) { Start-HostPruefung; return }
+    Set-Zeilen $ui.txtHostPruefung @('–  Lese Hostname aus NoSpamProxy ...')
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript(". '$($script:Common.Replace("'", "''"))'; Get-NleNspHostname")
+    $script:NspName = @{ PS = $ps; Handle = $ps.BeginInvoke() }
+    $script:NspNameTimer.Start()
+}
+
+function Update-NspNameUebernahme {
+    $p = $script:NspName
+    if (-not $p) { $script:NspNameTimer.Stop(); return }
+    if (-not $p.Handle.IsCompleted) { return }
+    $script:NspNameTimer.Stop()
+    $script:NspName = $null
+    $h = $null
+    try { $h = @($p.PS.EndInvoke($p.Handle))[-1] } catch { }
+    $p.PS.Dispose()
+    if (-not $ui.txtHost.Text.Trim()) {
+        if ($h) {
+            $ui.txtHost.Text = $h
+            Add-Log "Hostname aus NoSpamProxy übernommen: $h"
+            Set-AbsenderVorschlag
+            Show-Cname
+        } else {
+            Add-Log 'Hostname ließ sich nicht aus NoSpamProxy lesen (keine Antwort auf 127.0.0.1:25), bitte eintragen.'
+        }
+    }
     Start-HostPruefung
+}
+
+function Start-Pruefungen {
+    # Beim Öffnen: Hostname übernehmen/prüfen (nebenher), Konnektoren laden (wenn ein Schlüssel
+    # da ist), danach DNS prüfen (wenn registriert)
+    Start-UpdatePruefung
+    Start-NspNameUebernahme
     $dns = {
         $h = $ui.txtHost.Text.Trim().ToLower().TrimEnd('.')
         if ($script:AcmeDns -and $script:AcmeDns.Hostname -eq $h) { Start-DnsPruefung }
@@ -758,7 +814,7 @@ $ui.btnUpdate.Add_Click({
     } -Argumente @($i, $script:Ordner) -Danach {
         Add-Log 'Update installiert, starte neu ...'
         $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        Start-Process $ps -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -File `"$(Join-Path $script:Ordner 'NspLetsEncrypt.ps1')`""
+        Start-Process $ps -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$(Join-Path $script:Ordner 'NspLetsEncrypt.ps1')`""
         $fenster.Close()
     }
 })
@@ -932,7 +988,9 @@ $ui.btnErneuernJetzt.Add_Click({
 
 #endregion
 
-Import-Formular
-Update-Status
+try {
+    Import-Formular
+    Update-Status
+} catch { Show-Startfehler $_.Exception.Message; return }
 $fenster.Add_ContentRendered({ Start-Pruefungen })
 [void]$fenster.ShowDialog()

@@ -32,7 +32,8 @@ von oben nach unten – 1 und 2 ändern noch nichts:
    Rechte, die das Konto selbst nicht hat, lässt es weg.
 2. **Konnektoren laden**, anhaken, was das Zertifikat bekommt.
    Vorausgewählt: Empfang auf Port 25 und der Default-Sendekonnektor.
-3. **Host:** Hostname eintragen, z. B. `mail.firma.de`. Das Fenster prüft dann
+3. **Host:** Auf neuen Servern liest das Fenster den Hostnamen aus der SMTP-Begrüßung des
+   eigenen NoSpamProxy (`127.0.0.1:25`) und trägt ihn ein; sonst von Hand, z. B. `mail.firma.de`. Das Fenster prüft dann
    (auch beim Öffnen und mit *Prüfen*): Gibt es den Namen im öffentlichen DNS? Ist er Mailserver (MX)
    der Domain? Antwortet dort ein Mailserver auf Port 25? Nur Hinweise, nichts davon blockiert – Port 25
    ist von innen oft nicht erreichbar, obwohl es von außen geht.
@@ -42,8 +43,8 @@ von oben nach unten – 1 und 2 ändern noch nichts:
    - zeigt auf: der Wert aus *zeigt auf*
 
    *DNS prüfen*, bis es grün ist (der Hoster braucht oft ein paar Minuten; ein geänderter Eintrag ist wegen der TTL bis zu einer Stunde lang noch alt zu sehen).
-5. **Mail bei Fehlern:** *Testmail senden*. Standard ist Versand über NSP selbst (`localhost:25`).
-   Wird die Mail dort als Relay abgelehnt, einen anderen SMTP-Server eintragen.
+5. **Mail bei Fehlern:** *Testmail senden*. Vorgabe ist Versand über NSP selbst an die lokale IP
+   des Servers (von `localhost` lehnt NSP meist mit 5.4.4 ab), Absender `info@<Domain>`.
 6. **Zertifikat holen, einspielen und Erneuerung einrichten**.
 7. Optional **Erneuerung testen** – führt die nächtliche Prüfung sofort als SYSTEM aus und zeigt,
    dass die Aufgabe an Posh-ACME, den API-Schlüssel und NSP herankommt. Nötig ist es nicht.
