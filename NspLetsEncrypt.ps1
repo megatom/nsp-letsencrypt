@@ -1004,7 +1004,7 @@ $ui.btnAblaufTest.Add_Click({
         Set-Meldung $ui.txtAblaufStatus '✘ Posh-ACME fehlt, bitte oben im Status installieren.' fehler
         return
     }
-    Set-Zeilen $ui.txtAblaufStatus @('–  Teste Abruf bei Let''s Encrypt (Testumgebung), etwa 1 Minute ...')
+    Set-Zeilen $ui.txtAblaufStatus @('–  Teste Abruf bei Let''s Encrypt (Testumgebung), etwa eine halbe Minute ...')
     Start-Hintergrund -Arbeit {
         param($k)
         $VerbosePreference = 'Continue'

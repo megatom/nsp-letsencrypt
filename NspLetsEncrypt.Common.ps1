@@ -3,8 +3,10 @@
 # und die automatische Erneuerung (NspCert-Erneuern.ps1).
 # Windows PowerShell 5.1, benötigt die Module Posh-ACME und NoSpamProxy.
 
-$NleVersion    = '2026.10.01.4'
+$NleVersion    = '2026.10.01.5'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
+# Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
+$NleDnsWarten  = 10
 
 $NleBasis    = Join-Path $env:ProgramData 'NspLetsEncrypt'
 $NleKonfig   = Join-Path $NleBasis 'config.json'
@@ -520,10 +522,10 @@ function New-NleZertifikat {
             "_acme-challenge.$h" = @($reg.subdomain, $reg.username, $reg.password, $reg.fulldomain)
         }
     }
-    Write-NleLog "Fordere Zertifikat für $h an (RSA 2048, dauert etwa 1 Minute) ..."
+    Write-NleLog "Fordere Zertifikat für $h an (RSA 2048, dauert etwa eine halbe Minute) ..."
     try {
         $cert = New-PACertificate $h -Plugin AcmeDns -PluginArgs $pluginArgs -Install `
-            -FriendlyName "NoSpamProxy $h (Let's Encrypt)" -DnsSleep 30 -Force:$Erzwingen -ErrorAction Stop
+            -FriendlyName "NoSpamProxy $h (Let's Encrypt)" -DnsSleep $NleDnsWarten -Force:$Erzwingen -ErrorAction Stop
     } catch { throw (Get-NleAcmeFehlertext $_.Exception.Message) }
     if (-not $cert) {
         $cert = Get-PACertificate $h
@@ -570,8 +572,8 @@ function Test-NleAblauf {
                 "_acme-challenge.$h" = @($reg.subdomain, $reg.username, $reg.password, $reg.fulldomain)
             }
         }
-        Write-NleLog "Ablauftest für $h bei der Testumgebung von Let's Encrypt (dauert etwa 1 Minute) ..."
-        $cert = New-PACertificate $h -Name $auftrag -Plugin AcmeDns -PluginArgs $pluginArgs -DnsSleep 30 -Force -ErrorAction Stop
+        Write-NleLog "Ablauftest für $h bei der Testumgebung von Let's Encrypt (dauert etwa eine halbe Minute) ..."
+        $cert = New-PACertificate $h -Name $auftrag -Plugin AcmeDns -PluginArgs $pluginArgs -DnsSleep $NleDnsWarten -Force -ErrorAction Stop
         if (-not $cert) { throw 'Let''s Encrypt hat kein Testzertifikat ausgestellt.' }
         Write-NleLog 'Testzertifikat ausgestellt (Testumgebung, nicht vertrauenswürdig, wird nicht verwendet).'
     } catch {
@@ -610,6 +612,9 @@ function Invoke-NleErneuerung {
         Import-NlePoshAcme
         Set-PAServer $k.Server
         Write-NleLog "Erneuerungslauf für $($k.Hostname) ($($k.Server))"
+        # Wartezeit steht im Auftrag; ältere Aufträge (30 s) auf den aktuellen Wert bringen
+        $auftrag = Get-PAOrder -MainDomain $k.Hostname
+        if ($auftrag -and $auftrag.DnsSleep -ne $NleDnsWarten) { Set-PAOrder -MainDomain $k.Hostname -DnsSleep $NleDnsWarten }
         $neu = Submit-Renewal -MainDomain $k.Hostname -ErrorAction Stop
         if ($neu) { Write-NleLog 'Zertifikat wurde erneuert.' }
 

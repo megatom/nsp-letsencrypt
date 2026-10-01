@@ -1,8 +1,7 @@
 {
-  "Version": "2026.10.01.4",
-  "Tag": "v2026.10.01.4",
+  "Version": "2026.10.01.5",
+  "Tag": "v2026.10.01.5",
   "Aenderungen": [
-    "Neuer Knopf \"Ablauf testen\": kompletter Abruf bei der Testumgebung von Let's Encrypt, ohne echtes Zertifikat",
-    "Verständliche Hinweise bei Fehlern im Abruf (acme-dns, CNAME, Let's Encrypt), auch in der Fehler-Mail"
+    "Wartezeit auf den DNS-Prüfeintrag 10 statt 30 Sekunden (Abruf, Ablauftest und nächtliche Erneuerung)"
   ]
 }
