@@ -3,7 +3,7 @@
 # und die automatische Erneuerung (NspCert-Erneuern.ps1).
 # Windows PowerShell 5.1, benötigt die Module Posh-ACME und NoSpamProxy.
 
-$NleVersion    = '2026.10.01.5'
+$NleVersion    = '2026.10.01.6'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -579,6 +579,12 @@ function Test-NleAblauf {
     } catch {
         throw (Get-NleAcmeFehlertext $_.Exception.Message)
     } finally {
+        # Bestätigung des Testkontos verwerfen, sonst prüft der nächste Test DNS/CNAME gar nicht
+        # (Let's Encrypt verwendet erfolgreiche Bestätigungen eine Weile wieder). Nur Testumgebung.
+        try {
+            $o = Get-PAOrder -Name $auftrag
+            if ($o) { $o | Revoke-PAAuthorization -Force -ErrorAction Stop }
+        } catch { }
         try { Remove-PAOrder -Name $auftrag -Force -ErrorAction Stop } catch { }
         # Für Fenster und Erneuerung wieder den echten Server einstellen
         $server = if ($Konfig.Server) { $Konfig.Server } else { 'LE_PROD' }
