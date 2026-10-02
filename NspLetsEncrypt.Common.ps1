@@ -4,7 +4,7 @@
 # Windows PowerShell 5.1, benötigt Posh-ACME. Mit NoSpamProxy-Modul: Zertifikat für die
 # NSP-Konnektoren; ohne: für den Remotedesktop-Dienst (Terminalserver).
 
-$NleVersion    = '2026.10.02.2'
+$NleVersion    = '2026.10.02.3'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -825,6 +825,47 @@ function Get-NleRdpTlsZertifikat {
             New-Object Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
         } finally { $ssl.Dispose() }
     } finally { $tcp.Close() }
+}
+
+function Get-NleRdpHostnameVorschlag {
+    # Servername + öffentliche Domain aus dem AD: häufigste Maildomain der Benutzer, sonst das
+    # erste UPN-Suffix. Interne Endungen und onmicrosoft.com zählen nicht (dafür gibt es kein Zertifikat).
+    $intern = '\.(local|lan|intern|internal|corp|home|localdomain)$|onmicrosoft\.com$'
+    $gueltig = '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$'
+    $zaehler = @{}
+    try {
+        $suche = New-Object DirectoryServices.DirectorySearcher
+        $suche.Filter = '(&(objectCategory=person)(objectClass=user)(mail=*))'
+        $suche.PageSize = 500
+        [void]$suche.PropertiesToLoad.Add('mail')
+        foreach ($treffer in $suche.FindAll()) {
+            $mail = [string]$treffer.Properties['mail'][0]
+            if ($mail -match '@(.+)$') {
+                $d = $Matches[1].ToLower().TrimEnd('.')
+                if ($d -match $gueltig -and $d -notmatch $intern) { $zaehler[$d] = 1 + [int]$zaehler[$d] }
+            }
+        }
+    } catch { }
+    $domain = $null; $quelle = $null; $andere = @()
+    if ($zaehler.Count) {
+        $sortiert = @($zaehler.GetEnumerator() | Sort-Object Value -Descending)
+        $domain = $sortiert[0].Key
+        $quelle = "häufigste Domain in $($sortiert[0].Value) Mailadressen im AD"
+        $andere = @($sortiert | Select-Object -Skip 1 | ForEach-Object { "$($_.Key) ($($_.Value))" })
+    } else {
+        try {
+            $konfig = ([ADSI]'LDAP://RootDSE').configurationNamingContext
+            $suffixe = @(([ADSI]"LDAP://CN=Partitions,$konfig").uPNSuffixes |
+                ForEach-Object { ([string]$_).ToLower() } | Where-Object { $_ -match $gueltig -and $_ -notmatch $intern })
+            if ($suffixe.Count) {
+                $domain = $suffixe[0]
+                $quelle = 'UPN-Suffix der Domäne'
+                $andere = @($suffixe | Select-Object -Skip 1)
+            }
+        } catch { }
+    }
+    if (-not $domain) { return $null }
+    [pscustomobject]@{ Hostname = "$($env:COMPUTERNAME.ToLower()).$domain"; Quelle = $quelle; Andere = $andere }
 }
 
 function Get-NleDnsServer {

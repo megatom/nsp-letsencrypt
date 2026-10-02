@@ -887,10 +887,17 @@ $script:NspNameTimer.Interval = [TimeSpan]::FromMilliseconds(300)
 $script:NspNameTimer.Add_Tick({ Update-NspNameUebernahme })
 
 function Start-NspNameUebernahme {
+    # NSP: Hostname aus der SMTP-Begrüßung; Terminalserver: Servername + öffentliche Domain aus dem AD
     if ($ui.txtHost.Text.Trim()) { Start-HostPruefung; return }
-    Set-Zeilen $ui.txtHostPruefung @('–  Lese Hostname aus NoSpamProxy ...')
+    if ($script:Modus -eq 'RDP') {
+        Set-Zeilen $ui.txtHostPruefung @('–  Ermittle Hostnamen aus Servername und Active Directory ...')
+        $befehl = 'Get-NleRdpHostnameVorschlag'
+    } else {
+        Set-Zeilen $ui.txtHostPruefung @('–  Lese Hostname aus NoSpamProxy ...')
+        $befehl = 'Get-NleNspHostname'
+    }
     $ps = [powershell]::Create()
-    [void]$ps.AddScript(". '$($script:Common.Replace("'", "''"))'; Get-NleNspHostname")
+    [void]$ps.AddScript(". '$($script:Common.Replace("'", "''"))'; $befehl")
     $script:NspName = @{ PS = $ps; Handle = $ps.BeginInvoke() }
     $script:NspNameTimer.Start()
 }
@@ -905,11 +912,20 @@ function Update-NspNameUebernahme {
     try { $h = @($p.PS.EndInvoke($p.Handle))[-1] } catch { }
     $p.PS.Dispose()
     if (-not $ui.txtHost.Text.Trim()) {
-        if ($h) {
+        if ($h -and $h -isnot [string]) {
+            # Vorschlag aus dem AD (Terminalserver)
+            $ui.txtHost.Text = $h.Hostname
+            Add-Log "Hostname-Vorschlag: $($h.Hostname) ($($h.Quelle)) – bei Bedarf überschreiben."
+            if (@($h.Andere).Count) { Add-Log "    Weitere Domains im AD: $(@($h.Andere) -join ', ')" }
+            Set-AbsenderVorschlag
+            Show-Cname
+        } elseif ($h) {
             $ui.txtHost.Text = $h
             Add-Log "Hostname aus NoSpamProxy übernommen: $h"
             Set-AbsenderVorschlag
             Show-Cname
+        } elseif ($script:Modus -eq 'RDP') {
+            Add-Log 'Keine öffentliche Domain im Active Directory gefunden, bitte Hostnamen eintragen (z. B. ts01.firma.de).'
         } else {
             Add-Log 'Hostname ließ sich nicht aus NoSpamProxy lesen (keine Antwort auf 127.0.0.1:25), bitte eintragen.'
         }
@@ -928,7 +944,7 @@ function Start-Pruefungen {
     $script:LadeTimer.Start()
     Start-FaktenPruefung
     Start-UpdatePruefung
-    if ($script:Modus -eq 'NSP') { Start-NspNameUebernahme } else { Start-HostPruefung }
+    Start-NspNameUebernahme
     $dns = {
         $h = $ui.txtHost.Text.Trim().ToLower().TrimEnd('.')
         if ($script:AcmeDns -and $script:AcmeDns.Hostname -eq $h) { Start-DnsPruefung }

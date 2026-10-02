@@ -1,8 +1,7 @@
 {
-  "Version": "2026.10.02.2",
-  "Tag": "v2026.10.02.2",
+  "Version": "2026.10.02.3",
+  "Tag": "v2026.10.02.3",
   "Aenderungen": [
-    "Terminalserver: Knopf \"Interne DNS-Zone anlegen\" legt den DNS-Eintrag per Remoting auf dem DC an",
-    "Kleine Textkorrekturen"
+    "Terminalserver: Hostname wird aus Servername und öffentlicher Domain im AD vorgeschlagen (häufigste Maildomain bzw. UPN-Suffix)"
   ]
 }
