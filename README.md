@@ -1,16 +1,19 @@
 # NoSpamProxy – Let's Encrypt
 
-Holt ein Let's-Encrypt-Zertifikat per **acme-dns** (DNS-01), spielt es in die gewählten
-NoSpamProxy-Konnektoren ein (Empfang und/oder Versand-Dispatcher) und richtet die tägliche
-Erneuerung als geplante Aufgabe ein. Bei Fehlern kommt eine Mail.
+Holt ein Let's-Encrypt-Zertifikat per **acme-dns** (DNS-01), spielt es ein und richtet die tägliche
+Erneuerung als geplante Aufgabe ein. Bei Fehlern kommt eine Mail. Zwei Betriebsarten, das Fenster
+erkennt sie selbst:
 
-Ersetzt den bisherigen Ablauf mit win-acme + Skript nur für den Empfangskonnektor.
+- **NoSpamProxy-Server:** Zertifikat für die NSP-Konnektoren (Empfang und/oder Versand-Dispatcher).
+  Ersetzt den bisherigen Ablauf mit win-acme + Skript nur für den Empfangskonnektor.
+- **Terminalserver (ohne NoSpamProxy):** Zertifikat für den Remotedesktop-Dienst, siehe
+  [Terminalserver](#terminalserver).
 
 ## Voraussetzungen
 
 - Windows Server 2019, 2022 oder 2025 **mit Desktopdarstellung** (kein Server Core, WPF fehlt dort)
 - Windows PowerShell 5.1 (bei allen drei Versionen vorhanden), `$PSVersionTable.PSVersion`
-- NoSpamProxy-PowerShell-Modul (auf dem NSP-Server vorhanden)
+- Auf NSP-Servern: NoSpamProxy-PowerShell-Modul (dort vorhanden)
 - Posh-ACME (das Fenster bietet die Installation aus der PowerShell Gallery an)
 - Ausgehend: HTTPS zu `acme-v02.api.letsencrypt.org` und zum acme-dns-Server, DNS zu 1.1.1.1/8.8.8.8 (optional)
 
@@ -52,6 +55,39 @@ von oben nach unten – 1 und 2 ändern noch nichts:
    dass die Aufgabe an Posh-ACME, den API-Schlüssel und NSP herankommt. Nötig ist es nicht.
 8. Falls vorhanden: die alte **win-acme-Aufgabe deaktivieren** (Knopf erscheint im Status).
    Sonst setzt win-acme bei seiner nächsten Erneuerung den Empfangskonnektor zurück.
+
+## Terminalserver
+
+Ohne NoSpamProxy auf dem Server arbeitet das Fenster in der Betriebsart **Remotedesktop**: Der
+Abschnitt NSP-Zugang entfällt, das Ziel ist der RDP-Dienst (`RDP-Tcp`). Der Server braucht **keinen
+Zugriff von außen** – Let's Encrypt prüft nur den DNS-Eintrag über acme-dns; ausgehend HTTPS genügt.
+
+1. **Name wählen**, z. B. `ts.firma.de` (öffentliche Domain des Kunden; `.local` geht bei Let's Encrypt nicht).
+2. **Öffentlicher DNS beim Hoster:** nur der CNAME `_acme-challenge.ts` → acme-dns (wie beim NSP).
+   Einen A-Eintrag braucht es öffentlich nicht – dann ist der Name von außen gar nicht erreichbar.
+3. **Interner DNS:** eigene Zone nur für diesen Namen (nicht für die ganze Domain), A-Eintrag auf den
+   Terminalserver. Auf dem DNS-Server bzw. DC:
+
+   ```powershell
+   Add-DnsServerPrimaryZone -Name 'ts.firma.de' -ReplicationScope Domain
+   Add-DnsServerResourceRecordA -ZoneName 'ts.firma.de' -Name '@' -IPv4Address 10.0.0.5
+   ```
+
+   Die Hostname-Prüfung im Fenster zeigt die Befehle mit der richtigen IP im Log an, wenn der Name
+   intern noch nicht auflöst. VPN-Clients müssen den internen DNS-Server benutzen.
+4. **Fenster durchgehen** wie beim NSP (Remotedesktop, Host, acme-dns, Mail, Zertifikat). Als
+   SMTP-Server für die Fehler-Mail die IP des NSP-Servers des Kunden eintragen.
+5. **Clients verbinden sich mit `ts.firma.de`** (nicht mit `TS01` oder der IP), sonst passt der Name
+   nicht zum Zertifikat.
+
+Beim Einspielen bekommt der RDP-Dienst (läuft als NETZWERKDIENST) Leserecht auf den privaten
+Schlüssel, das Zertifikat wird zugewiesen und per TLS-Handschlag auf Port 3389 gegengeprüft.
+Der Status warnt, wenn es in der Domäne eine Zertifizierungsstelle (AD CS) gibt, per
+Gruppenrichtlinie eine RDP-Zertifikatvorlage gesetzt ist oder die RDP-Sicherheitsschicht auf „RDP“
+steht (dann benutzt Windows gar kein Zertifikat).
+
+Hinweis: Jedes Let's-Encrypt-Zertifikat steht in öffentlichen Protokollen (Certificate Transparency),
+der Name `ts.firma.de` ist also nachlesbar – erreichbar ist der Server dadurch nicht.
 
 ## Was wo liegt
 

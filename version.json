@@ -1,7 +1,9 @@
 {
-  "Version": "2026.10.01.6",
-  "Tag": "v2026.10.01.6",
+  "Version": "2026.10.02.1",
+  "Tag": "v2026.10.02.1",
   "Aenderungen": [
-    "Ablauf testen prüft jedes Mal wirklich acme-dns und den CNAME (Bestätigung des Testkontos wird danach verworfen)"
+    "Neu: Betriebsart Remotedesktop für Terminalserver ohne NoSpamProxy (Zertifikat für RDP, Zugriff nur intern/VPN möglich)",
+    "Warnungen bei Zertifizierungsstelle (AD CS), RDP-Zertifikatvorlage per GPO oder RDP-Sicherheitsschicht",
+    "Meldungen nennen Abschnitte beim Namen statt mit Nummer"
   ]
 }

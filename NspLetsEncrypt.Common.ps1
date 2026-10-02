@@ -1,9 +1,10 @@
 ﻿# NspLetsEncrypt.Common.ps1
 # Gemeinsame Funktionen für das Einrichtungsfenster (NspLetsEncrypt.ps1)
 # und die automatische Erneuerung (NspCert-Erneuern.ps1).
-# Windows PowerShell 5.1, benötigt die Module Posh-ACME und NoSpamProxy.
+# Windows PowerShell 5.1, benötigt Posh-ACME. Mit NoSpamProxy-Modul: Zertifikat für die
+# NSP-Konnektoren; ohne: für den Remotedesktop-Dienst (Terminalserver).
 
-$NleVersion    = '2026.10.01.6'
+$NleVersion    = '2026.10.02.1'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -141,9 +142,10 @@ function Test-NleCname {
 function Resolve-NleOeffentlich {
     # DNS-Abfrage bei öffentlichen Resolvern (intern gibt es oft eigene Zonen für die Maildomain).
     # Leeres Ergebnis = Server hat geantwortet, dass es den Eintrag nicht gibt.
-    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Typ)
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Typ, [switch]$NurOeffentlich)
     $letzter = $null
-    foreach ($dns in @('1.1.1.1', '8.8.8.8', '')) {
+    $server = if ($NurOeffentlich) { @('1.1.1.1', '8.8.8.8') } else { @('1.1.1.1', '8.8.8.8', '') }
+    foreach ($dns in $server) {
         $p = @{ Name = $Name; Type = $Typ; DnsOnly = $true; QuickTimeout = $true; ErrorAction = 'Stop' }
         if ($dns) { $p.Server = $dns }
         try { return @(Resolve-DnsName @p | Where-Object { "$($_.Type)" -eq $Typ }) }
@@ -155,9 +157,39 @@ function Resolve-NleOeffentlich {
     throw $letzter
 }
 
+function Test-NleRdpHostname {
+    # Terminalserver: intern muss der Name auf diesen Server zeigen, öffentlich soll er (für
+    # "nur per VPN") nicht auflösbar sein, und der RDP-Dienst muss antworten
+    param([Parameter(Mandatory)][string]$Hostname)
+    $e = [ordered]@{
+        Modus = 'RDP'; Hostname = $Hostname
+        Intern = @(); InternFehler = $null; LokaleIps = @()
+        Oeffentlich = @(); OeffentlichFehler = $null
+        RdpOk = $false; RdpZertifikat = $null; RdpFehler = $null; Port = (Get-NleRdpPort)
+    }
+    $e.LokaleIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.IPAddress })
+    try {
+        $e.Intern = @(Resolve-DnsName -Name $Hostname -Type A -DnsOnly -QuickTimeout -ErrorAction Stop |
+            Where-Object { "$($_.Type)" -eq 'A' } | ForEach-Object { $_.IPAddress })
+    } catch { $e.InternFehler = $_.Exception.Message }
+    try { $e.Oeffentlich = @(Resolve-NleOeffentlich $Hostname 'A' -NurOeffentlich | ForEach-Object { $_.IPAddress }) }
+    catch { $e.OeffentlichFehler = $_.Exception.Message }
+    try {
+        $z = Get-NleRdpTlsZertifikat
+        $e.RdpOk = $true
+        $e.RdpZertifikat = [pscustomobject]@{
+            Name = $z.GetNameInfo('SimpleName', $false); Aussteller = $z.GetNameInfo('SimpleName', $true)
+            Selbst = ($z.Subject -eq $z.Issuer); Bis = $z.NotAfter; Thumbprint = $z.Thumbprint
+        }
+    } catch { $e.RdpFehler = $(if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }) }
+    [pscustomobject]$e
+}
+
 function Test-NleHostname {
     # Drei Stufen: Gibt es den Namen? Ist er MX der Domain? Antwortet dort ein Mailserver?
+    # Ohne NoSpamProxy (Terminalserver) die RDP-Prüfung
     param([Parameter(Mandatory)][string]$Hostname)
+    if (-not (Test-NleNspVorhanden)) { return Test-NleRdpHostname -Hostname $Hostname }
     $e = [ordered]@{
         Hostname = $Hostname; Adressen = @(); AFehler = $null
         Domain = $null; MxListe = @(); IstMx = $false; MxFehler = $null
@@ -349,8 +381,9 @@ function Get-NleEmpfangSchluessel {
 }
 
 function Get-NleZiele {
-    # Alle Stellen in NSP, die ein TLS-Zertifikat tragen können:
-    # SMTP-Empfangskonnektoren und die Dispatcher der Sendekonnektoren.
+    # Alle Stellen, die ein TLS-Zertifikat tragen können: mit NSP die SMTP-Empfangskonnektoren
+    # und die Dispatcher der Sendekonnektoren, ohne NSP der Remotedesktop-Dienst.
+    if (-not (Test-NleNspVorhanden)) { return @(Get-NleRdpZiel) }
     Connect-NleNsp
     $liste = New-Object System.Collections.Generic.List[object]
 
@@ -408,9 +441,24 @@ function Set-NleZertifikat {
         [Parameter(Mandatory)][string]$Thumbprint,
         [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Schluessel
     )
-    if (-not $Schluessel.Count) { Write-NleLog 'Keine Konnektoren ausgewählt, nichts einzuspielen.' -Stufe Warnung; return }
+    if (-not $Schluessel.Count) { Write-NleLog 'Keine Ziele ausgewählt, nichts einzuspielen.' -Stufe Warnung; return }
     if (-not (Test-Path "Cert:\LocalMachine\My\$Thumbprint")) {
         throw "Zertifikat $Thumbprint liegt nicht im Speicher LocalMachine\My."
+    }
+    if ('RDP' -in $Schluessel) { Set-NleRdpZertifikat -Thumbprint $Thumbprint }
+    if (-not @($Schluessel | Where-Object { $_ -ne 'RDP' }).Count) {
+        $rdp = Get-NleRdpZiel
+        if ($rdp.Thumbprint -ne $Thumbprint) { throw "Der RDP-Dienst hat das Zertifikat nicht übernommen (eingestellt: $($rdp.Thumbprint))." }
+        try {
+            $geliefert = Get-NleRdpTlsZertifikat
+            if ($geliefert.Thumbprint -ne $Thumbprint) {
+                throw "Der RDP-Dienst liefert noch $($geliefert.Thumbprint) aus ($($geliefert.Subject)) statt des neuen Zertifikats."
+            }
+            Write-NleLog 'RDP geprüft: der Dienst liefert das neue Zertifikat aus.'
+        } catch {
+            Write-NleLog "RDP-Gegenprobe über Port $(Get-NleRdpPort) nicht möglich: $($_.Exception.Message)" -Stufe Warnung
+        }
+        return
     }
     Connect-NleNsp
 
@@ -543,9 +591,9 @@ function Get-NleAcmeFehlertext {
     # Typische Fehler beim Abruf in einen Hinweis übersetzen, was zu tun ist
     param([string]$Meldung)
     $hinweis = switch -Regex ($Meldung) {
-        '\(401\)|Unauthorized|Nicht autorisiert' { 'acme-dns hat die Zugangsdaten abgelehnt – in Schritt 4 neu registrieren und den CNAME beim Hoster anpassen.'; break }
-        'TXT record|NXDOMAIN|dns ::|DNS problem' { 'Let''s Encrypt findet den Prüfeintrag nicht – ist der CNAME beim Hoster richtig gesetzt (Schritt 4, DNS prüfen)?'; break }
-        'public suffix|Invalid identifiers|rejectedIdentifier' { 'Let''s Encrypt stellt für diesen Hostnamen nichts aus – Schreibweise in Schritt 3 prüfen.'; break }
+        '\(401\)|Unauthorized|Nicht autorisiert' { 'acme-dns hat die Zugangsdaten abgelehnt – im Abschnitt „acme-dns und CNAME“ neu registrieren und den CNAME beim Hoster anpassen.'; break }
+        'TXT record|NXDOMAIN|dns ::|DNS problem' { 'Let''s Encrypt findet den Prüfeintrag nicht – ist der CNAME beim Hoster richtig gesetzt (Abschnitt „acme-dns und CNAME“, DNS prüfen)?'; break }
+        'public suffix|Invalid identifiers|rejectedIdentifier' { 'Let''s Encrypt stellt für diesen Hostnamen nichts aus – Schreibweise im Abschnitt „Host“ prüfen.'; break }
         'rateLimited|too many' { 'Let''s Encrypt bremst gerade (zu viele Versuche) – später noch einmal probieren.'; break }
         'Unable to connect|Die Verbindung|Remotename|could not be resolved|Zeitüberschreitung|timed out' { 'Keine Verbindung ins Internet (Let''s Encrypt oder acme-dns) – Firewall/Proxy prüfen.'; break }
     }
@@ -559,7 +607,7 @@ function Test-NleAblauf {
     Import-NlePoshAcme
     $h = $Konfig.Hostname
     $reg = $Konfig.AcmeDns
-    if (-not $reg -or $reg.Hostname -ne $h) { throw "Keine acme-dns-Registrierung für $h (Schritt 4)." }
+    if (-not $reg -or $reg.Hostname -ne $h) { throw "Keine acme-dns-Registrierung für $h (Abschnitt 'acme-dns und CNAME')." }
     $auftrag = 'nle-ablauftest'
     try {
         Set-PAServer LE_STAGE
@@ -646,7 +694,7 @@ function Invoke-NleErneuerung {
             $k.Thumbprint = $cert.Thumbprint
             Save-NleKonfig $k
             Remove-NleAltesZertifikat -Alt $alt -Neu $cert.Thumbprint
-            Write-NleEreignis "Neues Zertifikat $($cert.Thumbprint) für $($k.Hostname) in NoSpamProxy eingespielt, gültig bis $($cert.NotAfter.ToString('dd.MM.yyyy'))." -Id 1001
+            Write-NleEreignis "Neues Zertifikat $($cert.Thumbprint) für $($k.Hostname) eingespielt, gültig bis $($cert.NotAfter.ToString('dd.MM.yyyy'))." -Id 1001
         } else {
             Write-NleLog "Nichts zu tun, gültig bis $($cert.NotAfter.ToString('dd.MM.yyyy'))."
         }
@@ -671,6 +719,135 @@ function Invoke-NleErneuerung {
         }
         throw $fehler
     }
+}
+
+#endregion
+
+#region Remotedesktop (Betriebsart ohne NoSpamProxy)
+
+function Test-NleNspVorhanden {
+    # Schnell, ohne Get-Module -ListAvailable: liegt das NoSpamProxy-Modul in einem Modulordner?
+    foreach ($p in ($env:PSModulePath -split ';' | Where-Object { $_ })) {
+        if (Test-Path (Join-Path $p 'NoSpamProxy')) { return $true }
+    }
+    $false
+}
+
+function Get-NleRdpEinstellung {
+    Get-CimInstance -Namespace root/cimv2/TerminalServices -ClassName Win32_TSGeneralSetting -Filter "TerminalName='RDP-Tcp'" -ErrorAction Stop
+}
+
+function Get-NleRdpPort {
+    $p = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name PortNumber -ErrorAction SilentlyContinue).PortNumber
+    if ($p) { [int]$p } else { 3389 }
+}
+
+function Get-NleRdpZiel {
+    # Der RDP-Dienst als einziges Ziel auf Servern ohne NoSpamProxy
+    $ts = Get-NleRdpEinstellung
+    $tp = [string]$ts.SSLCertificateSHA1Hash
+    if ($tp -match '^0+$') { $tp = '' }
+    $c = $null
+    if ($tp) {
+        $c = Get-Item "Cert:\LocalMachine\My\$tp" -ErrorAction SilentlyContinue
+        if (-not $c) { $c = Get-Item "Cert:\LocalMachine\Remote Desktop\$tp" -ErrorAction SilentlyContinue }
+    }
+    [pscustomobject]@{
+        Art             = 'RDP'
+        Schluessel      = 'RDP'
+        ConnectorId     = $null
+        Name            = 'Remotedesktop (RDP-Tcp)'
+        Port            = Get-NleRdpPort
+        DispatcherIndex = $null
+        Dispatcher      = $null
+        Thumbprint      = $tp
+        Modus           = $null
+        SecurityLayer   = [int]$ts.SecurityLayer
+        ZertName        = $(if ($c) { $c.GetNameInfo('SimpleName', $false) } else { $null })
+        ZertSelbst      = $(if ($c) { $c.Subject -eq $c.Issuer } else { $null })
+        ZertBis         = $(if ($c) { $c.NotAfter } else { $null })
+    }
+}
+
+function Grant-NleSchluesselLesen {
+    # Der RDP-Dienst läuft als NETZWERKDIENST und braucht Leserecht auf den privaten Schlüssel,
+    # sonst nimmt Windows still wieder das selbstsignierte Zertifikat
+    param([Parameter(Mandatory)][string]$Thumbprint)
+    $c = Get-Item "Cert:\LocalMachine\My\$Thumbprint" -ErrorAction Stop
+    $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
+    if (-not $rsa) { throw "Zertifikat $Thumbprint hat keinen privaten RSA-Schlüssel." }
+    $pfad = if ($rsa -is [Security.Cryptography.RSACng]) {
+        Join-Path $env:ProgramData "Microsoft\Crypto\Keys\$($rsa.Key.UniqueName)"
+    } else {
+        Join-Path $env:ProgramData "Microsoft\Crypto\RSA\MachineKeys\$($rsa.CspKeyContainerInfo.UniqueKeyContainerName)"
+    }
+    if (-not (Test-Path $pfad)) { throw "Schlüsseldatei nicht gefunden: $pfad" }
+    $acl = Get-Acl $pfad
+    $netzwerkdienst = New-Object Security.Principal.SecurityIdentifier('S-1-5-20')
+    $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($netzwerkdienst, 'Read', 'Allow')))
+    Set-Acl -Path $pfad -AclObject $acl
+}
+
+function Set-NleRdpZertifikat {
+    param([Parameter(Mandatory)][string]$Thumbprint)
+    Grant-NleSchluesselLesen -Thumbprint $Thumbprint
+    Set-CimInstance -InputObject (Get-NleRdpEinstellung) -Property @{ SSLCertificateSHA1Hash = $Thumbprint } -ErrorAction Stop
+    Write-NleLog "Remotedesktop (RDP-Tcp) -> $Thumbprint"
+}
+
+function Get-NleRdpTlsZertifikat {
+    # Welches Zertifikat liefert der RDP-Dienst tatsächlich aus? RDP-Aushandlung (X.224 mit Wunsch
+    # TLS/CredSSP), danach TLS-Handschlag; das Zertifikat wird nur gelesen, nicht geprüft
+    param([string]$Server = '127.0.0.1', [int]$Port = (Get-NleRdpPort))
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    try {
+        $verbindung = $tcp.BeginConnect($Server, $Port, $null, $null)
+        if (-not $verbindung.AsyncWaitHandle.WaitOne(5000)) { throw "Port $Port antwortet nicht" }
+        $tcp.EndConnect($verbindung)
+        $strom = $tcp.GetStream()
+        $strom.ReadTimeout = 10000
+        $strom.WriteTimeout = 10000
+        [byte[]]$anfrage = 0x03, 0x00, 0x00, 0x13, 0x0e, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x08, 0x00, 0x03, 0x00, 0x00, 0x00
+        $strom.Write($anfrage, 0, $anfrage.Length)
+        $antwort = New-Object byte[] 19
+        $gelesen = 0
+        while ($gelesen -lt 19) {
+            $n = $strom.Read($antwort, $gelesen, 19 - $gelesen)
+            if ($n -le 0) { break }
+            $gelesen += $n
+        }
+        # Byte 11: 0x02 = Antwort mit gewähltem Protokoll, 0x03 = abgelehnt (nur RDP-Sicherheitsschicht)
+        if ($gelesen -lt 19 -or $antwort[11] -ne 0x02) { throw 'RDP-Dienst bietet kein TLS an (Sicherheitsschicht "RDP"?)' }
+        $ssl = New-Object System.Net.Security.SslStream($strom, $false, { param($a, $b, $c, $d) $true })
+        try {
+            $protokolle = [Security.Authentication.SslProtocols]::Tls12 -bor [Security.Authentication.SslProtocols]::Tls11 -bor [Security.Authentication.SslProtocols]::Tls
+            $ssl.AuthenticateAsClient($Server, $null, $protokolle, $false)
+            New-Object Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
+        } finally { $ssl.Dispose() }
+    } finally { $tcp.Close() }
+}
+
+function Get-NleAdcsHinweise {
+    # Warnungen, falls Zertifikate für RDP auch über eine interne Zertifizierungsstelle kommen könnten
+    $hinweise = New-Object System.Collections.Generic.List[string]
+    try {
+        $konfig = ([ADSI]'LDAP://RootDSE').configurationNamingContext
+        $stellen = [ADSI]"LDAP://CN=Enrollment Services,CN=Public Key Services,CN=Services,$konfig"
+        $namen = @($stellen.Children | ForEach-Object { [string]$_.cn })
+        if ($namen.Count) {
+            $hinweise.Add("In der Domäne gibt es eine Zertifizierungsstelle ($($namen -join ', ')) – prüfen, ob RDP-Zertifikate darüber verteilt werden.")
+        }
+    } catch { }
+    $richtlinie = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+    $vorlage = (Get-ItemProperty $richtlinie -Name SSLCertificateTemplateName -ErrorAction SilentlyContinue).SSLCertificateTemplateName
+    if ($vorlage) {
+        $hinweise.Add("Per Gruppenrichtlinie ist die RDP-Zertifikatvorlage '$vorlage' gesetzt – Windows tauscht das Zertifikat ggf. gegen eines daraus aus.")
+    }
+    $schicht = (Get-ItemProperty $richtlinie -Name SecurityLayer -ErrorAction SilentlyContinue).SecurityLayer
+    if ($null -ne $schicht -and [int]$schicht -eq 0) {
+        $hinweise.Add('Per Gruppenrichtlinie ist die RDP-Sicherheitsschicht "RDP" erzwungen – dann wird gar kein Zertifikat benutzt.')
+    }
+    $hinweise
 }
 
 #endregion

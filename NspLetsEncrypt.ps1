@@ -82,7 +82,7 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
           </StackPanel>
         </GroupBox>
 
-        <GroupBox Header="1. NSP-Zugang (ab NoSpamProxy 16)">
+        <GroupBox Name="grpZugang" Header="1. NSP-Zugang (ab NoSpamProxy 16)">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="175"/>
@@ -104,19 +104,19 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
           </Grid>
         </GroupBox>
 
-        <GroupBox Header="2. NoSpamProxy-Konnektoren">
+        <GroupBox Name="grpZiele" Header="2. NoSpamProxy-Konnektoren">
           <StackPanel>
-            <StackPanel Orientation="Horizontal">
-              <Button Name="btnKonnektoren" Content="Konnektoren laden"/>
-              <TextBlock VerticalAlignment="Center" Foreground="#666"
+            <DockPanel>
+              <Button DockPanel.Dock="Left" Name="btnKonnektoren" Content="Konnektoren laden"/>
+              <TextBlock Name="txtZieleHinweis" VerticalAlignment="Center" Foreground="#666" TextWrapping="Wrap"
                          Text="Angehakte Stellen bekommen das Zertifikat, auch bei jeder Erneuerung."/>
-            </StackPanel>
+            </DockPanel>
             <StackPanel Name="pnlZiele" Margin="0,8,0,0"/>
             <TextBlock Name="txtZieleStatus" Margin="0,6,0,0" TextWrapping="Wrap"/>
           </StackPanel>
         </GroupBox>
 
-        <GroupBox Header="3. Host">
+        <GroupBox Name="grpHost" Header="3. Host">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="175"/>
@@ -137,7 +137,7 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
           </Grid>
         </GroupBox>
 
-        <GroupBox Header="4. acme-dns und CNAME">
+        <GroupBox Name="grpAcme" Header="4. acme-dns und CNAME">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="175"/>
@@ -167,7 +167,7 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
           </Grid>
         </GroupBox>
 
-        <GroupBox Header="5. Mail bei Fehlern">
+        <GroupBox Name="grpMail" Header="5. Mail bei Fehlern">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="175"/>
@@ -193,7 +193,7 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
           </Grid>
         </GroupBox>
 
-        <GroupBox Header="6. Zertifikat">
+        <GroupBox Name="grpZert" Header="6. Zertifikat">
           <StackPanel>
             <TextBlock Name="txtZertHinweis" TextWrapping="Wrap" Margin="0,0,0,8"/>
             <CheckBox Name="chkErzwingen" Margin="0,0,0,8"
@@ -229,7 +229,22 @@ foreach ($n in $xaml.SelectNodes("//*[@Name]")) {
     $name = $n.GetAttribute('Name')
     $ui[$name] = $fenster.FindName($name)
 }
-$fenster.Title = "NoSpamProxy – Let's Encrypt (Version $NleVersion)"
+# Betriebsart: mit NoSpamProxy die Konnektoren, sonst (Terminalserver) der Remotedesktop-Dienst
+$script:Modus = if (Test-NleNspVorhanden) { 'NSP' } else { 'RDP' }
+if ($script:Modus -eq 'RDP') {
+    $fenster.Title = "Let's Encrypt für Remotedesktop (Version $NleVersion)"
+    $ui.grpZugang.Visibility = 'Collapsed'
+    $ui.grpZiele.Header = '1. Remotedesktop'
+    $ui.grpHost.Header = '2. Host'
+    $ui.grpAcme.Header = '3. acme-dns und CNAME'
+    $ui.grpMail.Header = '4. Mail bei Fehlern'
+    $ui.grpZert.Header = '5. Zertifikat'
+    $ui.btnKonnektoren.Content = 'Status lesen'
+    $ui.txtZieleHinweis.Text = 'Der Remotedesktop-Dienst bekommt das Zertifikat, auch bei jeder Erneuerung. Die Clients verbinden sich danach mit dem Hostnamen aus dem nächsten Abschnitt.'
+    $ui.txtHost.ToolTip = 'z. B. ts.firma.de – intern auf diesen Server, öffentlich nicht nötig (Zugriff nur per VPN)'
+} else {
+    $fenster.Title = "Let's Encrypt für NoSpamProxy (Version $NleVersion)"
+}
 $script:Knoepfe = 'btnAblaufTest', 'btnUpdate', 'btnPoshInstall', 'btnWacsAus', 'btnRegistrieren', 'btnDnsPruefen', 'btnApiKey', 'btnKonnektoren',
                   'btnTestmail', 'btnAusstellen', 'btnErneuernJetzt'
 $script:AcmeDns = $null
@@ -343,12 +358,13 @@ function Update-Status {
     $c = $null; $task = $null; $info = $null
     $f = $script:Fakten
     if (-not $f) {
-        $zeilen.Add('–  Prüfe Module (NoSpamProxy, Posh-ACME) ...')
+        $zeilen.Add('–  Prüfe Module und Umgebung ...')
     } else {
-        if ($f.Nsp) { $zeilen.Add("✔  NoSpamProxy-Modul $($f.Nsp)") }
-        else { $zeilen.Add('✘  NoSpamProxy-Modul fehlt – das Werkzeug muss auf dem NSP-Server laufen.') }
+        if ($script:Modus -eq 'NSP') { $zeilen.Add("✔  NoSpamProxy-Modul $($f.Nsp)") }
+        else { $zeilen.Add('–  Betriebsart Remotedesktop (kein NoSpamProxy auf diesem Server)') }
         if ($f.Posh) { $zeilen.Add("✔  Posh-ACME $($f.Posh)") }
         else { $zeilen.Add('✘  Posh-ACME fehlt') }
+        foreach ($h in @($f.Adcs | Where-Object { $_ })) { $zeilen.Add("⚠  $h") }
     }
     $ui.btnPoshInstall.Visibility = if ($f -and -not $f.Posh) { 'Visible' } else { 'Collapsed' }
 
@@ -364,13 +380,15 @@ function Update-Status {
     }
 
     $z = Get-NleZugang
-    if ($z) {
+    if ($script:Modus -ne 'NSP') {
+        # Terminalserver: kein NSP-Zugang
+    } elseif ($z) {
         $ablauf = if ($z.Ablauf) { [DateTime]::Parse($z.Ablauf, $null, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime().ToString('dd.MM.yyyy') } else { 'unbegrenzt' }
         $wer = if ($z.CreatedBy) { ", angelegt von $($z.CreatedBy)" } else { '' }
         $zeilen.Add("✔  NSP-API-Schlüssel '$($z.Name)' gültig bis $ablauf$wer")
         Set-Meldung $ui.txtApiStatus "✔ Schlüssel vorhanden, gültig bis $ablauf." ok
     } else {
-        $zeilen.Add('–  Kein NSP-API-Schlüssel (ab NSP 16 nötig, Schritt 1)')
+        $zeilen.Add('–  Kein NSP-API-Schlüssel (ab NSP 16 nötig, Abschnitt NSP-Zugang)')
         Set-Meldung $ui.txtApiStatus 'Noch kein Schlüssel, bitte anlegen.' hinweis
     }
 
@@ -392,7 +410,7 @@ function Update-Status {
         $zeilen.Add('–  Prüfe geplante Aufgaben (win-acme) ...')
         $ui.btnWacsAus.Visibility = 'Collapsed'
     } elseif ($wacs.Count) {
-        $zeilen.Add("⚠  win-acme-Aufgabe aktiv ($($wacs -join ', ')) – erneuert weiter und überschreibt den Empfangskonnektor.")
+        $zeilen.Add("⚠  win-acme-Aufgabe aktiv ($($wacs -join ', ')) – erneuert weiter und überschreibt das Zertifikat.")
         $ui.btnWacsAus.Visibility = 'Visible'
     } else {
         $ui.btnWacsAus.Visibility = 'Collapsed'
@@ -402,7 +420,7 @@ function Update-Status {
     # Schritt 6: was zu tun ist und ob die Erneuerung läuft
     if ($k -and $k.Thumbprint -and $c -and $task) {
         Set-Meldung $ui.txtZertHinweis ('Ist eingerichtet, die Erneuerung läuft jede Nacht automatisch – hier ist nichts mehr zu tun. ' +
-            'Den großen Knopf nur erneut drücken, wenn du oben Konnektoren oder Hostname geändert hast.') hinweis
+            'Den großen Knopf nur erneut drücken, wenn du oben die Ziele oder den Hostnamen geändert hast.') hinweis
         $gelaufen = $info.LastRunTime -and $info.LastRunTime.Year -gt 2000
         if (-not $gelaufen) {
             Set-Meldung $ui.txtZertStatus "✔ Zertifikat gültig bis $($c.NotAfter.ToString('dd.MM.yyyy')), automatische Erneuerung aktiv (erster Lauf heute Nacht)." ok
@@ -412,8 +430,8 @@ function Update-Status {
             Set-Meldung $ui.txtZertStatus "⚠ Zertifikat gültig bis $($c.NotAfter.ToString('dd.MM.yyyy')), aber der letzte Lauf $($info.LastRunTime.ToString('dd.MM.yyyy HH:mm')) ist fehlgeschlagen (Ergebnis $($info.LastTaskResult)) – siehe Log." warnung
         }
     } else {
-        Set-Meldung $ui.txtZertHinweis ("Holt das Zertifikat bei Let's Encrypt, spielt es in die angehakten Konnektoren ein und richtet " +
-            'die tägliche automatische Erneuerung ein. Vorher die Schritte 1 bis 5 erledigen. Mit „Ablauf testen“ lässt sich ' +
+        Set-Meldung $ui.txtZertHinweis ("Holt das Zertifikat bei Let's Encrypt, spielt es in die angehakten Ziele ein und richtet " +
+            'die tägliche automatische Erneuerung ein. Vorher die Abschnitte darüber erledigen. Mit „Ablauf testen“ lässt sich ' +
             'vorher alles prüfen, ohne ein echtes Zertifikat zu holen.') hinweis
         Set-Meldung $ui.txtZertStatus '' hinweis
     }
@@ -430,10 +448,10 @@ function Update-HostStatus {
         if ($k.Hostname -eq $h -and $k.Kontakt -eq $ui.txtKontakt.Text.Trim()) {
             Set-Meldung $ui.txtHostStatus "✔ Eingerichtet: $h$stage" ok
         } else {
-            Set-Meldung $ui.txtHostStatus "⚠ Geändert – wird erst mit Schritt 6 übernommen (eingerichtet ist $($k.Hostname))." warnung
+            Set-Meldung $ui.txtHostStatus "⚠ Geändert – wird erst beim Zertifikat-Holen übernommen (eingerichtet ist $($k.Hostname))." warnung
         }
     } else {
-        Set-Meldung $ui.txtHostStatus 'Wird mit Schritt 6 übernommen.' hinweis
+        Set-Meldung $ui.txtHostStatus 'Wird beim Zertifikat-Holen übernommen.' hinweis
     }
 }
 
@@ -481,6 +499,10 @@ function Update-HostPruefung {
     if (-not $r) { Set-Zeilen $ui.txtHostPruefung @("⚠  Prüfung fehlgeschlagen: $fehler"); return }
 
     $z = New-Object System.Collections.Generic.List[string]
+    if ($r.PSObject.Properties['Modus'] -and $r.Modus -eq 'RDP') {
+        Show-RdpHostPruefung $r
+        return
+    }
     if ($r.AFehler) { $z.Add("⚠  Namensauflösung fehlgeschlagen: $($r.AFehler)") }
     elseif (-not @($r.Adressen).Count) { $z.Add("✘  $($r.Hostname) gibt es im öffentlichen DNS nicht – Tippfehler?") }
     else { $z.Add("✔  $($r.Hostname) → $(@($r.Adressen) -join ', ')") }
@@ -503,6 +525,40 @@ function Update-HostPruefung {
     foreach ($zeile in $z) { Add-Log "    $zeile" }
 }
 
+function Show-RdpHostPruefung {
+    # Terminalserver: intern auf diesen Server? öffentlich bewusst nicht? liefert RDP ein Zertifikat?
+    param($r)
+    $z = New-Object System.Collections.Generic.List[string]
+    $eigeneIp = @($r.LokaleIps | Where-Object { $_ -notlike '169.254.*' -and $_ -ne '127.0.0.1' }) | Select-Object -First 1
+    $dnsHilfe = $false
+    if ($r.InternFehler -or -not @($r.Intern).Count) {
+        $z.Add("✘  $($r.Hostname) ist intern nicht auflösbar – auf dem DNS-Server eine eigene Zone dafür anlegen (Befehle im Log).")
+        $dnsHilfe = $true
+    } else {
+        $eigene = @($r.Intern | Where-Object { $_ -in @($r.LokaleIps) })
+        if ($eigene.Count) { $z.Add("✔  intern → $(@($r.Intern) -join ', ') (dieser Server)") }
+        else { $z.Add("⚠  intern → $(@($r.Intern) -join ', ') – das ist nicht dieser Server ($($eigeneIp))."); $dnsHilfe = $true }
+    }
+    if ($r.OeffentlichFehler) { $z.Add("⚠  Öffentliche DNS-Server nicht erreichbar: $($r.OeffentlichFehler)") }
+    elseif (@($r.Oeffentlich).Count) { $z.Add("⚠  öffentlich auflösbar → $(@($r.Oeffentlich) -join ', ') – der Name ist von außen sichtbar; ist RDP dort freigegeben?") }
+    else { $z.Add('✔  öffentlich nicht auflösbar – Zugriff nur intern bzw. per VPN') }
+    if ($r.RdpOk) {
+        $c = $r.RdpZertifikat
+        $art = if ($c.Selbst) { 'selbstsigniertes Zertifikat' } else { "Zertifikat von $($c.Aussteller)" }
+        $z.Add("✔  RDP antwortet (Port $($r.Port)) mit $art für $($c.Name), gültig bis $($c.Bis.ToString('dd.MM.yyyy'))")
+    } else {
+        $z.Add("⚠  RDP antwortet nicht über TLS (Port $($r.Port)): $($r.RdpFehler)")
+    }
+    Set-Zeilen $ui.txtHostPruefung $z
+    Add-Log "Hostname-Prüfung $($r.Hostname):"
+    foreach ($zeile in $z) { Add-Log "    $zeile" }
+    if ($dnsHilfe) {
+        Add-Log '    Interne DNS-Zone anlegen (auf dem DNS-Server bzw. DC, PowerShell als Administrator):'
+        Add-Log "      Add-DnsServerPrimaryZone -Name '$($r.Hostname)' -ReplicationScope Domain"
+        Add-Log "      Add-DnsServerResourceRecordA -ZoneName '$($r.Hostname)' -Name '@' -IPv4Address $eigeneIp"
+    }
+}
+
 function Show-Cname {
     $r = $script:AcmeDns
     if (-not $r) {
@@ -523,16 +579,23 @@ function Show-Cname {
 
 function Update-ZieleStatus {
     $ziele = @($script:Ziele)
-    if (-not $ziele.Count) { Set-Meldung $ui.txtZieleStatus '✘ Keine Konnektoren gefunden.' fehler; return }
+    if (-not $ziele.Count) { Set-Meldung $ui.txtZieleStatus '✘ Keine Ziele gefunden.' fehler; return }
+    $rdp = @($ziele | Where-Object { $_.Art -eq 'RDP' -and $_.SecurityLayer -eq 0 })
+    if ($rdp.Count) {
+        Set-Meldung $ui.txtZieleStatus ('⚠ Die RDP-Sicherheitsschicht steht auf "RDP" – dann wird gar kein Zertifikat benutzt. ' +
+            'In den Remotedesktop-Einstellungen bzw. per Gruppenrichtlinie auf "Aushandeln" oder "SSL" stellen.') warnung
+        return
+    }
     $k = Get-NleKonfig
     $aktuell = if ($k) { $k.Thumbprint } else { $null }
     $gewaehlt = @(Get-GewaehlteZiele)
-    $text = "$($ziele.Count) Stellen gelesen, $($gewaehlt.Count) ausgewählt"
-    if (-not $gewaehlt.Count) { Set-Meldung $ui.txtZieleStatus "⚠ $text – ohne Häkchen bekommt kein Konnektor das Zertifikat." warnung; return }
+    $text = if ($script:Modus -eq 'RDP') { "Remotedesktop gelesen, $(if ($gewaehlt.Count) { 'ausgewählt' } else { 'nicht ausgewählt' })" }
+            else { "$($ziele.Count) Stellen gelesen, $($gewaehlt.Count) ausgewählt" }
+    if (-not $gewaehlt.Count) { Set-Meldung $ui.txtZieleStatus "⚠ $text – ohne Häkchen bekommt nichts das Zertifikat." warnung; return }
     if (-not $aktuell) { Set-Meldung $ui.txtZieleStatus "✔ $text." ok; return }
     $ohne = @($ziele | Where-Object { $_.Schluessel -in $gewaehlt -and $_.Thumbprint -ne $aktuell })
     if ($ohne.Count) {
-        Set-Meldung $ui.txtZieleStatus "⚠ $text – $($ohne.Count) davon tragen noch nicht das Zertifikat dieses Werkzeugs (wird mit Schritt 6 oder heute Nacht gesetzt)." warnung
+        Set-Meldung $ui.txtZieleStatus "⚠ $text – $($ohne.Count) davon tragen noch nicht das Zertifikat dieses Werkzeugs (wird beim Zertifikat-Holen oder heute Nacht gesetzt)." warnung
     } else {
         Set-Meldung $ui.txtZieleStatus "✔ $text – alle tragen das Zertifikat dieses Werkzeugs." ok
     }
@@ -551,6 +614,9 @@ function Show-Ziele {
         if ($z.Art -eq 'Empfang') {
             $text = "Empfang:  $($z.Name)  (Port $($z.Port))"
             $vor = "$($z.Port)" -eq '25'
+        } elseif ($z.Art -eq 'RDP') {
+            $text = "Remotedesktop (RDP-Tcp, Port $($z.Port))"
+            $vor = $true
         } else {
             $zusatz = if ($z.Dispatcher) { " ($($z.Dispatcher))" } else { '' }
             $text = "Versand:  $($z.Name), Dispatcher $($z.DispatcherIndex + 1)$zusatz"
@@ -561,6 +627,10 @@ function Show-Ziele {
               elseif (-not $z.Thumbprint) { 'keins' }
               elseif ($z.Thumbprint -eq $aktuell) { "$($z.Thumbprint) (dieses Werkzeug)" }
               else { $z.Thumbprint }
+        if ($z.Art -eq 'RDP' -and $z.ZertName) {
+            $selbst = if ($z.ZertSelbst) { 'selbstsigniert, ' } else { '' }
+            $tp += " ($selbst$($z.ZertName), bis $($z.ZertBis.ToString('dd.MM.yyyy')))"
+        }
         $cb = New-Object System.Windows.Controls.CheckBox
         $inhalt = New-Object System.Windows.Controls.TextBlock
         $inhalt.Text = "$text     –  aktuell: $tp"
@@ -574,11 +644,11 @@ function Show-Ziele {
     }
     if (-not @($Ziele).Count) {
         $t = New-Object System.Windows.Controls.TextBlock
-        $t.Text = 'Keine Konnektoren gefunden.'
+        $t.Text = 'Keine Ziele gefunden.'
         [void]$ui.pnlZiele.Children.Add($t)
     }
     $fremd = @($script:GespeicherteZiele | Where-Object { $_ -notin @($Ziele.Schluessel) })
-    if ($fremd.Count) { Add-Log "WARNUNG: Gespeicherte Konnektoren nicht mehr vorhanden: $($fremd -join ', ')" }
+    if ($fremd.Count) { Add-Log "WARNUNG: Gespeicherte Ziele nicht mehr vorhanden: $($fremd -join ', ')" }
     Update-ZieleStatus
 }
 
@@ -649,7 +719,7 @@ function Import-Formular {
         if ($k.AcmeDns -and $k.AcmeDns.Hostname -ne $k.Hostname) {
             # Neue Registrierung für einen anderen Hostnamen, noch nicht mit Schritt 6 übernommen
             $ui.txtHost.Text = $k.AcmeDns.Hostname
-            Add-Log "Umstellung auf $($k.AcmeDns.Hostname) begonnen, noch nicht mit Schritt 6 übernommen."
+            Add-Log "Umstellung auf $($k.AcmeDns.Hostname) begonnen, noch nicht übernommen (Zertifikat holen)."
         }
         Add-Log "Konfiguration geladen: $NleKonfig"
     } else {
@@ -659,6 +729,9 @@ function Import-Formular {
         $ui.txtSmtp.Text = ''
         $ui.txtPort.Text = "$($Vorgaben.SmtpPort)"
         Add-Log 'Noch keine Konfiguration auf diesem Server.'
+    }
+    if (-not $k -and $script:Modus -eq 'RDP') {
+        Set-Meldung $ui.txtMailStatus 'Als SMTP-Server die IP oder den Namen des NSP-Servers des Kunden eintragen, dann Testmail senden.' hinweis
     }
     if (-not $ui.txtMailStatus.Text) { Set-Meldung $ui.txtMailStatus 'Testmail senden, um die Einstellungen zu prüfen.' hinweis }
     $ui.txtNspBenutzer.Text = if ($env:USERDOMAIN -and $env:USERDOMAIN -ne $env:COMPUTERNAME) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
@@ -674,10 +747,10 @@ function Invoke-Weiter {
 function Import-Ziele {
     param([scriptblock]$Weiter)
     $script:Weiter = $Weiter
-    Set-Meldung $ui.txtZieleStatus 'Lade Konnektoren ...' hinweis
+    Set-Meldung $ui.txtZieleStatus $(if ($script:Modus -eq 'RDP') { 'Lese Remotedesktop-Einstellung ...' } else { 'Lade Konnektoren ...' }) hinweis
     Start-Hintergrund -Arbeit { Get-NleZiele } -Danach { param($r) Show-Ziele @($r); Invoke-Weiter } -Fehler {
         param($m)
-        Set-Meldung $ui.txtZieleStatus "✘ Konnektoren nicht lesbar: $m" fehler
+        Set-Meldung $ui.txtZieleStatus "✘ Ziele nicht lesbar: $m" fehler
         Invoke-Weiter
     }
 }
@@ -763,6 +836,7 @@ $posh = Get-Module -ListAvailable -Name Posh-ACME | Sort-Object Version -Descend
     Wacs = @(Get-ScheduledTask -ErrorAction SilentlyContinue |
              Where-Object { $_.TaskName -like 'win-acme*' -and $_.State -ne 'Disabled' } | ForEach-Object { $_.TaskName })
     Ip   = Get-NleLokaleIp
+    Adcs = @(if (-not (Test-NleNspVorhanden)) { Get-NleAdcsHinweise })
 }
 '@)
     $script:FaktenPruefung = @{ PS = $ps; Handle = $ps.BeginInvoke() }
@@ -778,9 +852,10 @@ function Update-FaktenPruefung {
     $r = $null
     try { $r = @($p.PS.EndInvoke($p.Handle))[-1] } catch { Add-Log "WARNUNG: Prüfung der Module fehlgeschlagen: $($_.Exception.Message)" }
     $p.PS.Dispose()
-    if (-not $r) { $r = [pscustomobject]@{ Nsp = $null; Posh = $null; Wacs = @(); Ip = 'localhost' } }
+    if (-not $r) { $r = [pscustomobject]@{ Nsp = $null; Posh = $null; Wacs = @(); Ip = 'localhost'; Adcs = @() } }
     $script:Fakten = $r
-    if (-not (Get-NleKonfig) -and -not $ui.txtSmtp.Text.Trim()) { $ui.txtSmtp.Text = $r.Ip }
+    # Auf dem NSP-Server ist die eigene IP der richtige SMTP-Server, auf dem Terminalserver nicht
+    if ($script:Modus -eq 'NSP' -and -not (Get-NleKonfig) -and -not $ui.txtSmtp.Text.Trim()) { $ui.txtSmtp.Text = $r.Ip }
     Update-Status
 }
 
@@ -847,12 +922,12 @@ function Start-Pruefungen {
     $script:LadeTimer.Start()
     Start-FaktenPruefung
     Start-UpdatePruefung
-    Start-NspNameUebernahme
+    if ($script:Modus -eq 'NSP') { Start-NspNameUebernahme } else { Start-HostPruefung }
     $dns = {
         $h = $ui.txtHost.Text.Trim().ToLower().TrimEnd('.')
         if ($script:AcmeDns -and $script:AcmeDns.Hostname -eq $h) { Start-DnsPruefung }
     }
-    if (Get-NleZugang) { Import-Ziele -Weiter $dns } else { & $dns }
+    if ($script:Modus -eq 'RDP' -or (Get-NleZugang)) { Import-Ziele -Weiter $dns } else { & $dns }
 }
 
 #endregion
@@ -997,7 +1072,7 @@ $ui.btnAblaufTest.Add_Click({
     $k = Read-Formular -Vollstaendig
     if (-not $k) { return }
     if (-not $k.AcmeDns -or $k.AcmeDns.Hostname -ne $k.Hostname) {
-        Set-Meldung $ui.txtAblaufStatus '✘ Zuerst in Schritt 4 registrieren und den DNS-Eintrag setzen.' fehler
+        Set-Meldung $ui.txtAblaufStatus '✘ Zuerst im Abschnitt acme-dns und CNAME registrieren und den DNS-Eintrag setzen.' fehler
         return
     }
     if ($script:Fakten -and -not $script:Fakten.Posh) {
@@ -1010,9 +1085,17 @@ $ui.btnAblaufTest.Add_Click({
         $VerbosePreference = 'Continue'
         Test-NleAblauf -Konfig $k
         $VerbosePreference = 'SilentlyContinue'
-        # Lesender Test des NSP-Zugangs; ein Fehler hier macht den Abruftest nicht ungültig
-        $nsp = try { "✔  NoSpamProxy erreichbar, $(@(Get-NleZiele).Count) Konnektor-Stellen lesbar" }
-               catch { "⚠  NoSpamProxy nicht lesbar: $($_.Exception.Message)" }
+        # Lesender Test der Ziele; ein Fehler hier macht den Abruftest nicht ungültig
+        $nsp = if (Test-NleNspVorhanden) {
+            try { "✔  NoSpamProxy erreichbar, $(@(Get-NleZiele).Count) Konnektor-Stellen lesbar" }
+            catch { "⚠  NoSpamProxy nicht lesbar: $($_.Exception.Message)" }
+        } else {
+            try {
+                $rz = Get-NleRdpZiel
+                if ($rz.SecurityLayer -eq 0) { '⚠  Remotedesktop lesbar, aber Sicherheitsschicht "RDP": das Zertifikat würde nicht benutzt' }
+                else { "✔  Remotedesktop-Einstellung lesbar (Port $($rz.Port))" }
+            } catch { "⚠  Remotedesktop-Einstellung nicht lesbar: $($_.Exception.Message)" }
+        }
         Write-NleLog $nsp.Substring(3)
         $nsp
     } -Argumente @(, $k) -Danach {
@@ -1030,11 +1113,13 @@ $ui.btnAblaufTest.Add_Click({
 $ui.btnAusstellen.Add_Click({
     $k = Read-Formular -Vollstaendig
     if (-not $k) { return }
-    if (-not $k.AcmeDns -or $k.AcmeDns.Hostname -ne $k.Hostname) { Add-Log "Erst bei acme-dns registrieren (Schritt 4)."; return }
-    if (-not $script:ZieleGeladen -and -not @($k.Ziele).Count) { Add-Log 'Erst die Konnektoren laden und auswählen (Schritt 2).'; return }
+    if (-not $k.AcmeDns -or $k.AcmeDns.Hostname -ne $k.Hostname) { Add-Log 'Erst im Abschnitt acme-dns und CNAME registrieren.'; return }
+    if (-not $script:ZieleGeladen -and -not @($k.Ziele).Count) { Add-Log 'Erst die Ziele laden und auswählen.'; return }
     if (-not $script:DnsOk -and -not (Show-Frage 'Die DNS-Prüfung war noch nicht erfolgreich. Trotzdem versuchen?')) { return }
     $umgebung = if ($k.Server -eq 'LE_STAGE') { 'Staging (Test)' } else { 'Produktion' }
-    $ziele = if (@($k.Ziele).Count) { "$(@($k.Ziele).Count) Konnektor-Stelle(n)" } else { 'KEINE Konnektoren (nur Zertifikat holen)' }
+    $ziele = if (-not @($k.Ziele).Count) { 'KEINE Ziele (nur Zertifikat holen)' }
+             elseif ($script:Modus -eq 'RDP') { 'den Remotedesktop-Dienst' }
+             else { "$(@($k.Ziele).Count) Konnektor-Stelle(n)" }
     if (-not (Show-Frage "Zertifikat für $($k.Hostname) holen ($umgebung) und in $ziele einspielen?`n`nDanach wird die tägliche Erneuerung als SYSTEM eingerichtet.")) { return }
     Save-NleKonfig $k
     $script:GespeicherteZiele = @($k.Ziele)
@@ -1050,7 +1135,7 @@ $ui.btnAusstellen.Add_Click({
         Save-NleKonfig $k
         Remove-NleAltesZertifikat -Alt $alt -Neu $tp
         Install-NleErneuerung -QuellOrdner $Quelle
-        Write-NleEreignis "Zertifikat $tp für $($k.Hostname) eingerichtet und in NoSpamProxy eingespielt." -Id 1000
+        Write-NleEreignis "Zertifikat $tp für $($k.Hostname) eingerichtet und eingespielt." -Id 1000
         Write-NleLog 'Fertig.'
     } -Argumente @($script:Ordner, [bool]$ui.chkErzwingen.IsChecked) -Danach {
         $ui.chkErzwingen.IsChecked = $false
@@ -1061,7 +1146,7 @@ $ui.btnAusstellen.Add_Click({
 
 $ui.btnErneuernJetzt.Add_Click({
     if (-not (Get-ScheduledTask -TaskName $NleTaskName -ErrorAction SilentlyContinue)) {
-        Add-Log 'Die Erneuerung ist noch nicht eingerichtet (Schritt 6).'
+        Add-Log 'Die Erneuerung ist noch nicht eingerichtet (erst Zertifikat holen).'
         return
     }
     Add-Log "Starte Aufgabe '$NleTaskName' ..."
