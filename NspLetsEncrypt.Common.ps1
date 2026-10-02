@@ -781,6 +781,8 @@ function Grant-NleSchluesselLesen {
     $orte = foreach ($o in 'Microsoft\Crypto\Keys', 'Microsoft\Crypto\RSA\MachineKeys', 'Microsoft\Crypto\SystemKeys') {
         Join-Path (Join-Path $env:ProgramData $o) $datei
     }
+    # Manche Anbieter (z. B. TPM) liefern statt des Dateinamens gleich den vollen Pfad
+    if ([IO.Path]::IsPathRooted($datei)) { $orte = @($datei) }
     $pfad = $orte | Where-Object { Test-Path $_ } | Select-Object -First 1
     if (-not $pfad) { throw "Schlüsseldatei $datei weder in Crypto\Keys noch in Crypto\RSA\MachineKeys gefunden." }
     $acl = Get-Acl $pfad
