@@ -1,9 +1,8 @@
 {
-  "Version": "2026.10.02.1",
-  "Tag": "v2026.10.02.1",
+  "Version": "2026.10.02.2",
+  "Tag": "v2026.10.02.2",
   "Aenderungen": [
-    "Neu: Betriebsart Remotedesktop für Terminalserver ohne NoSpamProxy (Zertifikat für RDP, Zugriff nur intern/VPN möglich)",
-    "Warnungen bei Zertifizierungsstelle (AD CS), RDP-Zertifikatvorlage per GPO oder RDP-Sicherheitsschicht",
-    "Meldungen nennen Abschnitte beim Namen statt mit Nummer"
+    "Terminalserver: Knopf \"Interne DNS-Zone anlegen\" legt den DNS-Eintrag per Remoting auf dem DC an",
+    "Kleine Textkorrekturen"
   ]
 }

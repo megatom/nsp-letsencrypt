@@ -73,8 +73,12 @@ Zugriff von außen** – Let's Encrypt prüft nur den DNS-Eintrag über acme-dns
    Add-DnsServerResourceRecordA -ZoneName 'ts.firma.de' -Name '@' -IPv4Address 10.0.0.5
    ```
 
-   Die Hostname-Prüfung im Fenster zeigt die Befehle mit der richtigen IP im Log an, wenn der Name
-   intern noch nicht auflöst. VPN-Clients müssen den internen DNS-Server benutzen.
+   Einfacher: Löst der Name intern nicht auf, zeigt das Fenster bei Host den Knopf **Interne DNS-Zone
+   anlegen**. Er legt den Eintrag per PowerShell-Remoting auf dem DNS-Server dieses Servers (DC) an –
+   in einer vorhandenen internen Zone der Domain, sonst in einer eigenen Zone nur für diesen Namen.
+   Braucht DNS-Rechte (Domänen-Admin oder DnsAdmins); fehlen sie dem angemeldeten Konto, fragt das
+   Fenster nach einem anderen. Die Befehle zum Selbst-Ausführen stehen zusätzlich im Log.
+   VPN-Clients müssen den internen DNS-Server benutzen.
 4. **Fenster durchgehen** wie beim NSP (Remotedesktop, Host, acme-dns, Mail, Zertifikat). Als
    SMTP-Server für die Fehler-Mail die IP des NSP-Servers des Kunden eintragen.
 5. **Clients verbinden sich mit `ts.firma.de`** (nicht mit `TS01` oder der IP), sonst passt der Name

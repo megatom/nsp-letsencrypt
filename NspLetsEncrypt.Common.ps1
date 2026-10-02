@@ -4,7 +4,7 @@
 # Windows PowerShell 5.1, benötigt Posh-ACME. Mit NoSpamProxy-Modul: Zertifikat für die
 # NSP-Konnektoren; ohne: für den Remotedesktop-Dienst (Terminalserver).
 
-$NleVersion    = '2026.10.02.1'
+$NleVersion    = '2026.10.02.2'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -825,6 +825,65 @@ function Get-NleRdpTlsZertifikat {
             New-Object Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
         } finally { $ssl.Dispose() }
     } finally { $tcp.Close() }
+}
+
+function Get-NleDnsServer {
+    # DNS-Server dieses Servers (in der Domäne die DCs) mit Namen fürs Remoting (Kerberos braucht
+    # Namen statt IP); notfalls der DC, den die Domäne selbst nennt
+    $liste = New-Object System.Collections.Generic.List[object]
+    $ips = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.ServerAddresses } | Where-Object { $_ -and $_ -notlike '127.*' } | Select-Object -Unique)
+    foreach ($ip in $ips) {
+        $name = try { ([string](Resolve-DnsName -Name $ip -Type PTR -DnsOnly -QuickTimeout -ErrorAction Stop | Select-Object -First 1).NameHost).TrimEnd('.') } catch { $null }
+        if ($name) { $liste.Add([pscustomobject]@{ Name = $name; Ip = $ip }) }
+    }
+    if (-not $liste.Count) {
+        try {
+            $dc = [DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain().FindDomainController().Name
+            $liste.Add([pscustomobject]@{ Name = $dc; Ip = $null })
+        } catch { }
+    }
+    $liste
+}
+
+function Set-NleInterneDnsZone {
+    # Legt auf dem DNS-Server (DC) per Remoting den A-Eintrag für den Hostnamen an: in einer eigenen
+    # Zone nur für diesen Namen, oder in einer vorhandenen internen Zone der Domain
+    param(
+        [Parameter(Mandatory)][string]$Hostname,
+        [Parameter(Mandatory)][string]$Ip,
+        [Parameter(Mandatory)][string]$Server,
+        [pscredential]$Anmeldung
+    )
+    $p = @{ ComputerName = $Server; ArgumentList = @($Hostname, $Ip); ErrorAction = 'Stop' }
+    if ($Anmeldung) { $p.Credential = $Anmeldung }
+    Invoke-Command @p -ScriptBlock {
+        param($name, $ip)
+        Import-Module DnsServer -ErrorAction Stop
+        $zonen = @(Get-DnsServerZone -ErrorAction Stop | Where-Object { -not $_.IsReverseLookupZone })
+        $eigene = $zonen | Where-Object { $_.ZoneName -eq $name } | Select-Object -First 1
+        $eltern = $zonen | Where-Object { $name.EndsWith('.' + $_.ZoneName) } |
+            Sort-Object { $_.ZoneName.Length } -Descending | Select-Object -First 1
+        if ($eigene) {
+            $zone = $name; $eintrag = '@'
+            "Zone $zone gibt es schon."
+        } elseif ($eltern) {
+            $zone = $eltern.ZoneName; $eintrag = $name.Substring(0, $name.Length - $zone.Length - 1)
+            "Interne Zone $zone gibt es schon, der Eintrag kommt dort hinein."
+        } else {
+            Add-DnsServerPrimaryZone -Name $name -ReplicationScope Domain -ErrorAction Stop
+            $zone = $name; $eintrag = '@'
+            "Zone $zone angelegt (AD-integriert, repliziert auf alle DCs der Domäne)."
+        }
+        $alt = @(Get-DnsServerResourceRecord -ZoneName $zone -Name $eintrag -RRType A -ErrorAction SilentlyContinue)
+        if ($alt | Where-Object { $_.RecordData.IPv4Address.IPAddressToString -eq $ip }) {
+            "A-Eintrag $name -> $ip ist schon da."
+        } else {
+            foreach ($a in $alt) { Remove-DnsServerResourceRecord -ZoneName $zone -InputObject $a -Force -ErrorAction Stop }
+            Add-DnsServerResourceRecordA -ZoneName $zone -Name $eintrag -IPv4Address $ip -ErrorAction Stop
+            "A-Eintrag $name -> $ip gesetzt$(if ($alt.Count) { ' (alter Eintrag ersetzt)' })."
+        }
+    }
 }
 
 function Get-NleAdcsHinweise {

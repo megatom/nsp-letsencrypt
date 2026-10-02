@@ -130,7 +130,11 @@ if (-not (Test-Path $script:Common)) { Show-Startfehler "Datei fehlt: $script:Co
             <TextBox Grid.Row="0" Grid.Column="1" Name="txtHost" ToolTip="z. B. mail.firma.de"/>
             <Button Grid.Row="0" Grid.Column="2" Name="btnHostPruefen" Content="Prüfen" Margin="0,2,0,2"
                     ToolTip="Prüft, ob es den Namen gibt, ob er Mailserver der Domain ist und ob dort ein Mailserver antwortet"/>
-            <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Name="txtHostPruefung" Margin="0,2,0,6" TextWrapping="Wrap" LineHeight="20"/>
+            <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,2,0,6">
+              <TextBlock Name="txtHostPruefung" TextWrapping="Wrap" LineHeight="20"/>
+              <Button Name="btnDnsZone" Content="Interne DNS-Zone anlegen" HorizontalAlignment="Left" Margin="0,4,0,0" Visibility="Collapsed"
+                      ToolTip="Legt auf dem DC (DNS-Server dieses Servers) per Remoting den internen DNS-Eintrag für den Hostnamen an"/>
+            </StackPanel>
             <Label Grid.Row="2" Content="Kontakt-Mail (LE)"/>
             <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Name="txtKontakt" ToolTip="Let's Encrypt schickt hierhin Ablauf-Hinweise"/>
             <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Name="txtHostStatus" Margin="0,6,0,0" TextWrapping="Wrap"/>
@@ -245,7 +249,7 @@ if ($script:Modus -eq 'RDP') {
 } else {
     $fenster.Title = "Let's Encrypt für NoSpamProxy (Version $NleVersion)"
 }
-$script:Knoepfe = 'btnAblaufTest', 'btnUpdate', 'btnPoshInstall', 'btnWacsAus', 'btnRegistrieren', 'btnDnsPruefen', 'btnApiKey', 'btnKonnektoren',
+$script:Knoepfe = 'btnDnsZone', 'btnAblaufTest', 'btnUpdate', 'btnPoshInstall', 'btnWacsAus', 'btnRegistrieren', 'btnDnsPruefen', 'btnApiKey', 'btnKonnektoren',
                   'btnTestmail', 'btnAusstellen', 'btnErneuernJetzt'
 $script:AcmeDns = $null
 $script:DnsOk = $false
@@ -532,7 +536,7 @@ function Show-RdpHostPruefung {
     $eigeneIp = @($r.LokaleIps | Where-Object { $_ -notlike '169.254.*' -and $_ -ne '127.0.0.1' }) | Select-Object -First 1
     $dnsHilfe = $false
     if ($r.InternFehler -or -not @($r.Intern).Count) {
-        $z.Add("✘  $($r.Hostname) ist intern nicht auflösbar – auf dem DNS-Server eine eigene Zone dafür anlegen (Befehle im Log).")
+        $z.Add("✘  $($r.Hostname) ist intern nicht auflösbar – mit dem Knopf darunter auf dem DC anlegen (oder die Befehle aus dem Log dort ausführen).")
         $dnsHilfe = $true
     } else {
         $eigene = @($r.Intern | Where-Object { $_ -in @($r.LokaleIps) })
@@ -550,6 +554,8 @@ function Show-RdpHostPruefung {
         $z.Add("⚠  RDP antwortet nicht über TLS (Port $($r.Port)): $($r.RdpFehler)")
     }
     Set-Zeilen $ui.txtHostPruefung $z
+    $script:DnsZoneIp = $eigeneIp
+    $ui.btnDnsZone.Visibility = if ($dnsHilfe -and $eigeneIp) { 'Visible' } else { 'Collapsed' }
     Add-Log "Hostname-Prüfung $($r.Hostname):"
     foreach ($zeile in $z) { Add-Log "    $zeile" }
     if ($dnsHilfe) {
@@ -1066,6 +1072,48 @@ $ui.btnTestmail.Add_Click({
         if ($alt) { $alt.Mail = $m; Save-NleKonfig $alt } else { Save-NleKonfig $script:TestKonfig }
         Set-Meldung $ui.txtMailStatus "✔ Testmail gesendet am $($jetzt.ToString('dd.MM.yyyy HH:mm')) – bitte im Postfach nachsehen." ok
     } -Fehler { param($m) Set-Meldung $ui.txtMailStatus "✘ Testmail fehlgeschlagen: $m" fehler }
+})
+
+function Start-DnsZoneAnlegen {
+    param([pscredential]$Anmeldung)
+    $h = $ui.txtHost.Text.Trim().ToLower().TrimEnd('.')
+    $ip = $script:DnsZoneIp
+    $server = $script:DnsZoneServer
+    Add-Log "Lege internen DNS-Eintrag $h -> $ip auf $server an ..."
+    Start-Hintergrund -Arbeit {
+        param($h, $ip, $server, $anmeldung)
+        foreach ($zeile in @(Set-NleInterneDnsZone -Hostname $h -Ip $ip -Server $server -Anmeldung $anmeldung)) { Write-NleLog "DNS auf ${server}: $zeile" }
+        Clear-DnsClientCache
+    } -Argumente @($h, $ip, $server, $Anmeldung) -Danach {
+        $ui.btnDnsZone.Visibility = 'Collapsed'
+        Start-HostPruefung -Immer
+    } -Fehler {
+        param($m)
+        if ($m -match 'Zugriff verweigert|Access is denied|Access denied|nicht autorisiert|unauthorized|PermissionDenied|0x80070005') {
+            $frage = "Das angemeldete Konto darf auf $($script:DnsZoneServer) keine DNS-Einträge anlegen.`n`nMit einem anderen Konto (Domänen-Admin oder DnsAdmins) versuchen?"
+            if (Show-Frage $frage) {
+                $anmeldung = Get-Credential -Message "Konto mit DNS-Rechten auf $($script:DnsZoneServer)"
+                if ($anmeldung) { Start-DnsZoneAnlegen -Anmeldung $anmeldung; return }
+            }
+        }
+        Add-Log 'Den Eintrag stattdessen von Hand anlegen – die Befehle stehen weiter oben im Log.'
+        [void][System.Windows.MessageBox]::Show($fenster, "DNS-Eintrag konnte nicht angelegt werden:`n`n$m", 'Fehler', 'OK', 'Error')
+    }
+}
+
+$ui.btnDnsZone.Add_Click({
+    $h = $ui.txtHost.Text.Trim().ToLower().TrimEnd('.')
+    if (-not $h -or -not $script:DnsZoneIp) { return }
+    $server = @(Get-NleDnsServer) | Select-Object -First 1
+    if (-not $server) {
+        Add-Log 'Kein DNS-Server bzw. DC gefunden – bitte die Befehle aus dem Log auf dem DC ausführen.'
+        return
+    }
+    $script:DnsZoneServer = $server.Name
+    $frage = "Auf $($server.Name) den internen DNS-Eintrag anlegen?`n`n$h -> $($script:DnsZoneIp) (dieser Server)`n`n" +
+             'Gibt es intern schon eine Zone der Domain, kommt der Eintrag dort hinein, sonst wird eine eigene Zone nur für diesen Namen angelegt (AD-integriert).'
+    if (-not (Show-Frage $frage)) { return }
+    Start-DnsZoneAnlegen
 })
 
 $ui.btnAblaufTest.Add_Click({
