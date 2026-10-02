@@ -62,7 +62,10 @@ Ohne NoSpamProxy auf dem Server arbeitet das Fenster in der Betriebsart **Remote
 Abschnitt NSP-Zugang entfällt, das Ziel ist der RDP-Dienst (`RDP-Tcp`). Der Server braucht **keinen
 Zugriff von außen** – Let's Encrypt prüft nur den DNS-Eintrag über acme-dns; ausgehend HTTPS genügt.
 
-1. **Name wählen**, z. B. `ts.firma.de` (öffentliche Domain des Kunden; `.local` geht bei Let's Encrypt nicht).
+1. **Name wählen** – am besten einen festen Namen wie `ts.firma.de` statt des Servernamens (das Fenster
+   schlägt `ts.<Domain>` vor). Bei einem Wechsel auf einen neuen Terminalserver bleibt der Name, nur der
+   interne DNS-Eintrag zeigt dann auf den neuen Server; RDP-Verbindungen müssen nicht geändert werden.
+   (`.local` geht bei Let's Encrypt nicht. Zwei Terminalserver gleichzeitig brauchen zwei Namen.)
 2. **Öffentlicher DNS beim Hoster:** nur der CNAME `_acme-challenge.ts` → acme-dns (wie beim NSP).
    Einen A-Eintrag braucht es öffentlich nicht – dann ist der Name von außen gar nicht erreichbar.
 3. **Interner DNS:** eigene Zone nur für diesen Namen (nicht für die ganze Domain), A-Eintrag auf den
@@ -94,6 +97,15 @@ steht (dann benutzt Windows gar kein Zertifikat).
 
 Hinweis: Jedes Let's-Encrypt-Zertifikat steht in öffentlichen Protokollen (Certificate Transparency),
 der Name `ts.firma.de` ist also nachlesbar – erreichbar ist der Server dadurch nicht.
+
+### Wechsel auf einen neuen Terminalserver
+
+1. Auf dem neuen Server das Werkzeug mit demselben Namen (`ts.firma.de`) einrichten, registrieren und
+   den CNAME `_acme-challenge.ts` beim Hoster auf das **neue** acme-dns-Ziel ändern.
+2. Zertifikat holen – der alte Server läuft so lange weiter.
+3. Erst dann im Host-Abschnitt **DNS auf diesen Server umstellen**: ab jetzt landen alle neuen
+   RDP-Verbindungen auf dem neuen Server.
+4. Auf dem alten Server die Aufgabe „NspLetsEncrypt Erneuerung“ deaktivieren.
 
 ## Was wo liegt
 

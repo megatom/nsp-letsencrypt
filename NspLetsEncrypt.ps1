@@ -541,7 +541,7 @@ function Show-RdpHostPruefung {
     } else {
         $eigene = @($r.Intern | Where-Object { $_ -in @($r.LokaleIps) })
         if ($eigene.Count) { $z.Add("✔  intern → $(@($r.Intern) -join ', ') (dieser Server)") }
-        else { $z.Add("⚠  intern → $(@($r.Intern) -join ', ') – das ist nicht dieser Server ($($eigeneIp))."); $dnsHilfe = $true }
+        else { $z.Add("⚠  intern → $(@($r.Intern) -join ', ') – das ist nicht dieser Server ($($eigeneIp)). Beim Serverwechsel mit dem Knopf darunter umstellen."); $dnsHilfe = $true }
     }
     if ($r.OeffentlichFehler) { $z.Add("⚠  Öffentliche DNS-Server nicht erreichbar: $($r.OeffentlichFehler)") }
     elseif (@($r.Oeffentlich).Count) { $z.Add("⚠  öffentlich auflösbar → $(@($r.Oeffentlich) -join ', ') – der Name ist von außen sichtbar; ist RDP dort freigegeben?") }
@@ -557,6 +557,9 @@ function Show-RdpHostPruefung {
     Start-SmtpSuche $r.Hostname
     $script:DnsZoneIp = $eigeneIp
     $ui.btnDnsZone.Visibility = if ($dnsHilfe -and $eigeneIp) { 'Visible' } else { 'Collapsed' }
+    # Zeigt der Name schon auf einen anderen Server, heißt das Umstellen: alle Benutzer landen danach hier
+    $script:DnsZoneAndere = @($r.Intern | Where-Object { $_ -notin @($r.LokaleIps) })
+    $ui.btnDnsZone.Content = if ($script:DnsZoneAndere.Count) { 'DNS auf diesen Server umstellen' } else { 'Interne DNS-Zone anlegen' }
     Add-Log "Hostname-Prüfung $($r.Hostname):"
     foreach ($zeile in $z) { Add-Log "    $zeile" }
     if ($dnsHilfe) {
@@ -1186,8 +1189,14 @@ $ui.btnDnsZone.Add_Click({
         return
     }
     $script:DnsZoneServer = $server.Name
-    $frage = "Auf $($server.Name) den internen DNS-Eintrag anlegen?`n`n$h -> $($script:DnsZoneIp) (dieser Server)`n`n" +
-             'Gibt es intern schon eine Zone der Domain, kommt der Eintrag dort hinein, sonst wird eine eigene Zone nur für diesen Namen angelegt (AD-integriert).'
+    if (@($script:DnsZoneAndere).Count) {
+        $frage = "ACHTUNG: $h zeigt derzeit auf $(@($script:DnsZoneAndere) -join ', ') – einen anderen Server.`n`n" +
+                 "Auf $($server.Name) umstellen auf $($script:DnsZoneIp) (dieser Server)?`n`n" +
+                 'Danach landen alle neuen RDP-Verbindungen auf diesem Server. Am besten erst umstellen, wenn hier das Zertifikat eingespielt ist.'
+    } else {
+        $frage = "Auf $($server.Name) den internen DNS-Eintrag anlegen?`n`n$h -> $($script:DnsZoneIp) (dieser Server)`n`n" +
+                 'Gibt es intern schon eine Zone der Domain, kommt der Eintrag dort hinein, sonst wird eine eigene Zone nur für diesen Namen angelegt (AD-integriert).'
+    }
     if (-not (Show-Frage $frage)) { return }
     Start-DnsZoneAnlegen
 })

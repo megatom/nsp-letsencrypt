@@ -1,7 +1,9 @@
 {
-  "Version": "2026.10.02.5",
-  "Tag": "v2026.10.02.5",
+  "Version": "2026.10.02.6",
+  "Tag": "v2026.10.02.6",
   "Aenderungen": [
-    "Terminalserver: Fehler \"Schlüsseldatei nicht gefunden\" beim Einspielen behoben (Schlüssel liegt im älteren Speicherort)"
+    "Terminalserver: Vorschlag ts.<Domain> als fester Name, der bei einem Serverwechsel bleibt",
+    "Zeigt der Name schon auf einen anderen Server: Knopf \"DNS auf diesen Server umstellen\" mit Warnung",
+    "Kleinigkeiten beim Einspielen (Schlüssel-Pfad bei TPM, keine überflüssige Posh-ACME-Warnung)"
   ]
 }

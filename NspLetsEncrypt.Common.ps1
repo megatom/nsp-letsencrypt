@@ -4,7 +4,7 @@
 # Windows PowerShell 5.1, benötigt Posh-ACME. Mit NoSpamProxy-Modul: Zertifikat für die
 # NSP-Konnektoren; ohne: für den Remotedesktop-Dienst (Terminalserver).
 
-$NleVersion    = '2026.10.02.5'
+$NleVersion    = '2026.10.02.6'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -832,7 +832,8 @@ function Get-NleRdpTlsZertifikat {
 }
 
 function Get-NleRdpHostnameVorschlag {
-    # Servername + öffentliche Domain aus dem AD: häufigste Maildomain der Benutzer, sonst das
+    # "ts." + öffentliche Domain aus dem AD (fester Name, der bei einem Serverwechsel bleibt; intern
+    # zeigt er per DNS auf den aktuellen Server): häufigste Maildomain der Benutzer, sonst das
     # erste UPN-Suffix. Interne Endungen und onmicrosoft.com zählen nicht (dafür gibt es kein Zertifikat).
     $intern = '\.(local|lan|intern|internal|corp|home|localdomain)$|onmicrosoft\.com$'
     $gueltig = '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$'
@@ -869,7 +870,7 @@ function Get-NleRdpHostnameVorschlag {
         } catch { }
     }
     if (-not $domain) { return $null }
-    [pscustomobject]@{ Hostname = "$($env:COMPUTERNAME.ToLower()).$domain"; Quelle = $quelle; Andere = $andere }
+    [pscustomobject]@{ Hostname = "ts.$domain"; Quelle = $quelle; Andere = $andere }
 }
 
 function Get-NleDnsServer {
