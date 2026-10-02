@@ -573,7 +573,8 @@ function New-NleZertifikat {
     Write-NleLog "Fordere Zertifikat für $h an (RSA 2048, dauert etwa eine halbe Minute) ..."
     try {
         $cert = New-PACertificate $h -Plugin AcmeDns -PluginArgs $pluginArgs -Install `
-            -FriendlyName "NoSpamProxy $h (Let's Encrypt)" -DnsSleep $NleDnsWarten -Force:$Erzwingen -ErrorAction Stop
+            -FriendlyName "NoSpamProxy $h (Let's Encrypt)" -DnsSleep $NleDnsWarten -Force:$Erzwingen -ErrorAction Stop `
+            -WarningAction SilentlyContinue
     } catch { throw (Get-NleAcmeFehlertext $_.Exception.Message) }
     if (-not $cert) {
         $cert = Get-PACertificate $h
