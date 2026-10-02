@@ -4,7 +4,7 @@
 # Windows PowerShell 5.1, benötigt Posh-ACME. Mit NoSpamProxy-Modul: Zertifikat für die
 # NSP-Konnektoren; ohne: für den Remotedesktop-Dienst (Terminalserver).
 
-$NleVersion    = '2026.10.02.3'
+$NleVersion    = '2026.10.02.4'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -980,6 +980,57 @@ function Get-NleLokaleIp {
         Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
         ForEach-Object { $_.IPv4Address.IPAddress } | Select-Object -First 1
     if ($ip) { $ip } else { 'localhost' }
+}
+
+function Test-NlePrivateIp {
+    param([string]$Ip)
+    $Ip -match '^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)'
+}
+
+function Get-NleSmtpBanner {
+    # Erste Zeile, mit der sich ein Mailserver meldet ("220 ..."), oder $null
+    param([Parameter(Mandatory)][string]$Server, [int]$Port = 25)
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    try {
+        $verbindung = $tcp.BeginConnect($Server, $Port, $null, $null)
+        if (-not $verbindung.AsyncWaitHandle.WaitOne(3000)) { return $null }
+        $tcp.EndConnect($verbindung)
+        $strom = $tcp.GetStream()
+        $strom.ReadTimeout = 10000
+        $zeile = (New-Object System.IO.StreamReader($strom)).ReadLine()
+        try { $schreiber = New-Object System.IO.StreamWriter($strom); $schreiber.Write("QUIT`r`n"); $schreiber.Flush() } catch { }
+        $zeile
+    } catch { $null } finally { $tcp.Close() }
+}
+
+function Find-NleNspServer {
+    # Terminalserver: den NoSpamProxy des Kunden als SMTP-Server für die Fehler-Mail finden – MX der
+    # Domain über den internen DNS, bestätigt durch die SMTP-Begrüßung; interne IPs zuerst
+    param([Parameter(Mandatory)][string]$Hostname)
+    $teile = $Hostname.Split('.')
+    for ($i = 1; $i -le $teile.Count - 2; $i++) {
+        $domain = $teile[$i..($teile.Count - 1)] -join '.'
+        $mx = @(try { Resolve-DnsName -Name $domain -Type MX -DnsOnly -QuickTimeout -ErrorAction Stop |
+            Where-Object { "$($_.Type)" -eq 'MX' } | Sort-Object Preference } catch { })
+        if (-not $mx.Count) { continue }
+        $kandidaten = @(foreach ($m in $mx) {
+            $name = ([string]$m.NameExchange).TrimEnd('.')
+            $ips = @(try { Resolve-DnsName -Name $name -Type A -DnsOnly -QuickTimeout -ErrorAction Stop |
+                Where-Object { "$($_.Type)" -eq 'A' } | ForEach-Object { $_.IPAddress } } catch { })
+            foreach ($ip in $ips) { [pscustomobject]@{ Name = $name; Ip = $ip; Privat = (Test-NlePrivateIp $ip) } }
+        })
+        foreach ($k in @($kandidaten | Sort-Object { -not $_.Privat })) {
+            $banner = Get-NleSmtpBanner -Server $k.Ip
+            if ($banner -match 'NoSpamProxy') {
+                return [pscustomobject]@{ Ip = $k.Ip; Name = $k.Name; Privat = $k.Privat; Banner = $banner; Domain = $domain; Kandidaten = $null }
+            }
+        }
+        return [pscustomobject]@{
+            Ip = $null; Name = $null; Privat = $false; Banner = $null; Domain = $domain
+            Kandidaten = (@($kandidaten | ForEach-Object { "$($_.Name) ($($_.Ip))" }) -join ', ')
+        }
+    }
+    $null
 }
 
 #endregion

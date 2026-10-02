@@ -554,6 +554,7 @@ function Show-RdpHostPruefung {
         $z.Add("⚠  RDP antwortet nicht über TLS (Port $($r.Port)): $($r.RdpFehler)")
     }
     Set-Zeilen $ui.txtHostPruefung $z
+    Start-SmtpSuche $r.Hostname
     $script:DnsZoneIp = $eigeneIp
     $ui.btnDnsZone.Visibility = if ($dnsHilfe -and $eigeneIp) { 'Visible' } else { 'Collapsed' }
     Add-Log "Hostname-Prüfung $($r.Hostname):"
@@ -865,6 +866,51 @@ function Update-FaktenPruefung {
     Update-Status
 }
 
+# Terminalserver: NoSpamProxy des Kunden als SMTP-Server für die Fehler-Mail suchen (nur bei leerem Feld)
+$script:SmtpSuche = $null
+$script:SmtpGesucht = $null
+$script:SmtpTimer = New-Object System.Windows.Threading.DispatcherTimer
+$script:SmtpTimer.Interval = [TimeSpan]::FromMilliseconds(300)
+$script:SmtpTimer.Add_Tick({ Update-SmtpSuche })
+
+function Start-SmtpSuche {
+    param([string]$Hostname)
+    if ($script:Modus -ne 'RDP' -or $script:SmtpSuche -or -not $Hostname -or $script:SmtpGesucht -eq $Hostname) { return }
+    if ($ui.txtSmtp.Text.Trim() -or (Get-NleKonfig)) { return }
+    $script:SmtpGesucht = $Hostname
+    Set-Meldung $ui.txtMailStatus 'Suche den NoSpamProxy des Kunden (MX der Domain im internen DNS) ...' hinweis
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript(". '$($script:Common.Replace("'", "''"))'; Find-NleNspServer -Hostname '$Hostname'")
+    $script:SmtpSuche = @{ PS = $ps; Handle = $ps.BeginInvoke() }
+    $script:SmtpTimer.Start()
+}
+
+function Update-SmtpSuche {
+    $p = $script:SmtpSuche
+    if (-not $p) { $script:SmtpTimer.Stop(); return }
+    if (-not $p.Handle.IsCompleted) { return }
+    $script:SmtpTimer.Stop()
+    $script:SmtpSuche = $null
+    $r = $null
+    try { $r = @($p.PS.EndInvoke($p.Handle))[-1] } catch { }
+    $p.PS.Dispose()
+    if ($ui.txtSmtp.Text.Trim()) { return }
+    if ($r -and $r.Ip) {
+        $ui.txtSmtp.Text = $r.Ip
+        Add-Log "SMTP-Server: NoSpamProxy $($r.Name) unter $($r.Ip) gefunden ($($r.Banner))."
+        if ($r.Privat) {
+            Set-Meldung $ui.txtMailStatus "NoSpamProxy des Kunden gefunden: $($r.Name) ($($r.Ip)). Jetzt Testmail senden." hinweis
+        } else {
+            Set-Meldung $ui.txtMailStatus ("NoSpamProxy gefunden, aber nur unter der öffentlichen IP $($r.Ip) ($($r.Name)) – " +
+                'besser die interne IP des NSP-Servers eintragen. Dann Testmail senden.') warnung
+        }
+    } else {
+        $gefunden = if ($r -and $r.Kandidaten) { " (MX von $($r.Domain): $($r.Kandidaten), dort meldet sich kein NoSpamProxy)" } else { '' }
+        Add-Log "Kein NoSpamProxy über den MX gefunden$gefunden."
+        Set-Meldung $ui.txtMailStatus 'Kein NoSpamProxy gefunden – als SMTP-Server die IP des NSP-Servers des Kunden eintragen, dann Testmail senden.' hinweis
+    }
+}
+
 # Ladebalken läuft, solange irgendeine Prüfung oder Aktion arbeitet
 $script:Geladen = $false
 $script:LadeTimer = New-Object System.Windows.Threading.DispatcherTimer
@@ -872,7 +918,7 @@ $script:LadeTimer.Interval = [TimeSpan]::FromMilliseconds(250)
 $script:LadeTimer.Add_Tick({ Update-Ladebalken })
 
 function Update-Ladebalken {
-    $laeuft = [bool]($script:Aufgabe -or $script:HostPruefung -or $script:UpdatePruefung -or $script:NspName -or $script:FaktenPruefung)
+    $laeuft = [bool]($script:Aufgabe -or $script:HostPruefung -or $script:UpdatePruefung -or $script:NspName -or $script:FaktenPruefung -or $script:SmtpSuche)
     $ui.prgLaden.Visibility = if ($laeuft) { 'Visible' } else { 'Collapsed' }
     if (-not $laeuft -and -not $script:Geladen) {
         $script:Geladen = $true
@@ -1087,7 +1133,21 @@ $ui.btnTestmail.Add_Click({
         $alt = Get-NleKonfig
         if ($alt) { $alt.Mail = $m; Save-NleKonfig $alt } else { Save-NleKonfig $script:TestKonfig }
         Set-Meldung $ui.txtMailStatus "✔ Testmail gesendet am $($jetzt.ToString('dd.MM.yyyy HH:mm')) – bitte im Postfach nachsehen." ok
-    } -Fehler { param($m) Set-Meldung $ui.txtMailStatus "✘ Testmail fehlgeschlagen: $m" fehler }
+    } -Fehler {
+        param($m)
+        if ($m -match '5\.4\.4|5\.7\.1|relay') {
+            $ip = if ($script:Fakten -and $script:Fakten.Ip -and $script:Fakten.Ip -ne 'localhost') { $script:Fakten.Ip } else { Get-NleLokaleIp }
+            $text = "✘ Der Mailserver nimmt von diesem Server keine Mails zur Weiterleitung an ($m). " +
+                    "In NoSpamProxy die IP $ip dieses Servers als Unternehmens-Mailserver eintragen, dann Testmail wiederholen."
+            if ($script:Modus -eq 'NSP' -and $ui.txtSmtp.Text.Trim() -in 'localhost', '127.0.0.1') {
+                $text = "✘ NoSpamProxy nimmt von localhost keine Mails zur Weiterleitung an ($m). Als SMTP-Server die LAN-IP $ip eintragen, dann Testmail wiederholen."
+            }
+            Set-Meldung $ui.txtMailStatus $text fehler
+            Add-Log "Hinweis: $($text.Substring(2))"
+        } else {
+            Set-Meldung $ui.txtMailStatus "✘ Testmail fehlgeschlagen: $m" fehler
+        }
+    }
 })
 
 function Start-DnsZoneAnlegen {

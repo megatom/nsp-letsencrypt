@@ -79,8 +79,10 @@ Zugriff von außen** – Let's Encrypt prüft nur den DNS-Eintrag über acme-dns
    Braucht DNS-Rechte (Domänen-Admin oder DnsAdmins); fehlen sie dem angemeldeten Konto, fragt das
    Fenster nach einem anderen. Die Befehle zum Selbst-Ausführen stehen zusätzlich im Log.
    VPN-Clients müssen den internen DNS-Server benutzen.
-4. **Fenster durchgehen** wie beim NSP (Remotedesktop, Host, acme-dns, Mail, Zertifikat). Als
-   SMTP-Server für die Fehler-Mail die IP des NSP-Servers des Kunden eintragen.
+4. **Fenster durchgehen** wie beim NSP (Remotedesktop, Host, acme-dns, Mail, Zertifikat). Den
+   SMTP-Server für die Fehler-Mail sucht das Fenster selbst (MX der Domain im internen DNS, bestätigt
+   durch die Begrüßung „NoSpamProxy“). Lehnt NoSpamProxy die Testmail mit 5.4.4 ab, die angezeigte IP
+   des Terminalservers in NoSpamProxy als Unternehmens-Mailserver eintragen.
 5. **Clients verbinden sich mit `ts.firma.de`** (nicht mit `TS01` oder der IP), sonst passt der Name
    nicht zum Zertifikat.
 
