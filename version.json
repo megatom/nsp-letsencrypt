@@ -1,8 +1,7 @@
 {
-  "Version": "2026.10.02.4",
-  "Tag": "v2026.10.02.4",
+  "Version": "2026.10.02.5",
+  "Tag": "v2026.10.02.5",
   "Aenderungen": [
-    "Terminalserver: SMTP-Server für die Fehler-Mail wird automatisch gefunden (NoSpamProxy über den MX im internen DNS)",
-    "Hinweis bei abgelehnter Testmail (5.4.4): welche IP in NoSpamProxy als Unternehmens-Mailserver einzutragen ist"
+    "Terminalserver: Fehler \"Schlüsseldatei nicht gefunden\" beim Einspielen behoben (Schlüssel liegt im älteren Speicherort)"
   ]
 }

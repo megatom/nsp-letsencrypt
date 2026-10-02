@@ -4,7 +4,7 @@
 # Windows PowerShell 5.1, benötigt Posh-ACME. Mit NoSpamProxy-Modul: Zertifikat für die
 # NSP-Konnektoren; ohne: für den Remotedesktop-Dienst (Terminalserver).
 
-$NleVersion    = '2026.10.02.4'
+$NleVersion    = '2026.10.02.5'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -776,12 +776,13 @@ function Grant-NleSchluesselLesen {
     $c = Get-Item "Cert:\LocalMachine\My\$Thumbprint" -ErrorAction Stop
     $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
     if (-not $rsa) { throw "Zertifikat $Thumbprint hat keinen privaten RSA-Schlüssel." }
-    $pfad = if ($rsa -is [Security.Cryptography.RSACng]) {
-        Join-Path $env:ProgramData "Microsoft\Crypto\Keys\$($rsa.Key.UniqueName)"
-    } else {
-        Join-Path $env:ProgramData "Microsoft\Crypto\RSA\MachineKeys\$($rsa.CspKeyContainerInfo.UniqueKeyContainerName)"
+    $datei = if ($rsa -is [Security.Cryptography.RSACng]) { $rsa.Key.UniqueName } else { $rsa.CspKeyContainerInfo.UniqueKeyContainerName }
+    # Auch ein über CNG geöffneter Schlüssel kann im alten CSP-Ordner liegen (beim Import per PFX üblich)
+    $orte = foreach ($o in 'Microsoft\Crypto\Keys', 'Microsoft\Crypto\RSA\MachineKeys', 'Microsoft\Crypto\SystemKeys') {
+        Join-Path (Join-Path $env:ProgramData $o) $datei
     }
-    if (-not (Test-Path $pfad)) { throw "Schlüsseldatei nicht gefunden: $pfad" }
+    $pfad = $orte | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $pfad) { throw "Schlüsseldatei $datei weder in Crypto\Keys noch in Crypto\RSA\MachineKeys gefunden." }
     $acl = Get-Acl $pfad
     $netzwerkdienst = New-Object Security.Principal.SecurityIdentifier('S-1-5-20')
     $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($netzwerkdienst, 'Read', 'Allow')))
