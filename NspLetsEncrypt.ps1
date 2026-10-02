@@ -544,7 +544,7 @@ function Show-RdpHostPruefung {
     else { $z.Add('✔  öffentlich nicht auflösbar – Zugriff nur intern bzw. per VPN') }
     if ($r.RdpOk) {
         $c = $r.RdpZertifikat
-        $art = if ($c.Selbst) { 'selbstsigniertes Zertifikat' } else { "Zertifikat von $($c.Aussteller)" }
+        $art = if ($c.Selbst) { 'selbstsigniertem Zertifikat' } else { "Zertifikat von $($c.Aussteller)" }
         $z.Add("✔  RDP antwortet (Port $($r.Port)) mit $art für $($c.Name), gültig bis $($c.Bis.ToString('dd.MM.yyyy'))")
     } else {
         $z.Add("⚠  RDP antwortet nicht über TLS (Port $($r.Port)): $($r.RdpFehler)")
