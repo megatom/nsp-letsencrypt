@@ -1,9 +1,7 @@
 {
-  "Version": "2026.10.02.6",
-  "Tag": "v2026.10.02.6",
+  "Version": "2026.10.14.1",
+  "Tag": "v2026.10.14.1",
   "Aenderungen": [
-    "Terminalserver: Vorschlag ts.<Domain> als fester Name, der bei einem Serverwechsel bleibt",
-    "Zeigt der Name schon auf einen anderen Server: Knopf \"DNS auf diesen Server umstellen\" mit Warnung",
-    "Kleinigkeiten beim Einspielen (Schlüssel-Pfad bei TPM, keine überflüssige Posh-ACME-Warnung)"
+    "Altes Zertifikat wird nach der Erneuerung nicht gelöscht, solange es noch in einer NSP-Konfigurationsdatei steht (sonst scheitert das nächste NSP-Update an der Intranetrolle)"
   ]
 }

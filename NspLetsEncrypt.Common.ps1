@@ -4,7 +4,7 @@
 # Windows PowerShell 5.1, benötigt Posh-ACME. Mit NoSpamProxy-Modul: Zertifikat für die
 # NSP-Konnektoren; ohne: für den Remotedesktop-Dienst (Terminalserver).
 
-$NleVersion    = '2026.10.02.6'
+$NleVersion    = '2026.10.14.1'
 $NleUpdateRepo = 'megatom/nsp-letsencrypt'
 # Wartezeit zwischen Prüfeintrag und Prüfung durch Let's Encrypt; acme-dns setzt den Eintrag sofort
 $NleDnsWarten  = 10
@@ -497,9 +497,24 @@ function Set-NleZertifikat {
     Write-NleLog 'NSP-Konnektoren geprüft, Thumbprint überall gesetzt.'
 }
 
+function Find-NleNspKonfigVerweis {
+    # NSP-Konfigurationsdateien, in denen der Fingerabdruck noch steht (z. B. httpConfiguration der
+    # Intranetrolle). Ein dort eingetragenes, aber gelöschtes Zertifikat lässt das nächste NSP-Update
+    # an der Intranetrolle scheitern.
+    param([Parameter(Mandatory)][string]$Thumbprint)
+    $orte = @(
+        (Join-Path $env:ProgramData 'Net at Work Mail Gateway\Configuration'),
+        (Join-Path $env:ProgramFiles 'NoSpamProxy\Web Portal\App_Data')
+    ) | Where-Object { Test-Path $_ }
+    if (-not $orte) { return }
+    Get-ChildItem $orte -Recurse -File -Include *.config, *.json, *.xml -ErrorAction SilentlyContinue |
+        Select-String -Pattern $Thumbprint -SimpleMatch -List -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.Path }
+}
+
 function Remove-NleAltesZertifikat {
     # Entfernt nur das Zertifikat, das dieses Werkzeug selbst vorher eingespielt hat,
-    # und nur wenn NSP es nirgends mehr verwendet.
+    # und nur wenn NSP es nirgends mehr verwendet (weder in Konnektoren noch in Konfigurationsdateien).
     param([string]$Alt, [string]$Neu)
     if (-not $Alt -or $Alt -eq $Neu) { return }
     $pfad = "Cert:\LocalMachine\My\$Alt"
@@ -507,6 +522,11 @@ function Remove-NleAltesZertifikat {
     $noch = @(Get-NleZiele | Where-Object { $_.Thumbprint -eq $Alt })
     if ($noch.Count) {
         Write-NleLog "Altes Zertifikat $Alt wird noch verwendet ($(($noch | ForEach-Object { "$($_.Art) $($_.Name)" }) -join ', ')) und bleibt im Speicher." -Stufe Warnung
+        return
+    }
+    $dateien = @(Find-NleNspKonfigVerweis -Thumbprint $Alt)
+    if ($dateien.Count) {
+        Write-NleLog "Altes Zertifikat $Alt steht noch in der NSP-Konfiguration ($(($dateien | Split-Path -Leaf) -join ', ')) und bleibt im Speicher. Vor dem Löschen dort auf das neue Zertifikat umstellen, sonst scheitert das nächste NSP-Update." -Stufe Warnung
         return
     }
     $c = Get-Item $pfad
